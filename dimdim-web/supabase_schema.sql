@@ -40,3 +40,6 @@ drop trigger if exists set_user_id_on_transactions on public.transactions;
 create trigger set_user_id_on_transactions
 before insert on public.transactions
 for each row execute function public.set_user_id();
+drop table if exists public.transactions cascade;
+drop table if exists public.accounts cascade;
+drop table if exists public.categories cascade;
