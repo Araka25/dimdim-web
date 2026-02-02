@@ -1,3 +1,4 @@
+cat > src/app/app/reports/yearly/page.tsx <<'TSX'
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -25,10 +26,10 @@ type Tx = {
 type Category = { id: string; name: string };
 
 export default function YearlyReportsPage() {
+  const currentYear = new Date().getFullYear();
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(() => String(currentYear));
   const [txs, setTxs] = useState<Tx[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -46,7 +47,6 @@ export default function YearlyReportsPage() {
     setError(null);
 
     const supabase = supabaseBrowser();
-
     const [catsRes, txRes] = await Promise.all([
       supabase.from('categories').select('id,name'),
       supabase
@@ -78,7 +78,7 @@ export default function YearlyReportsPage() {
 
     for (const t of txs) {
       const d = new Date(t.occurred_at);
-      const m = d.getMonth(); // 0..11
+      const m = d.getMonth();
       const cents = t.amount_cents || 0;
       if (t.kind === 'income') rows[m].income += cents;
       else rows[m].expense += cents;
@@ -139,7 +139,6 @@ export default function YearlyReportsPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Entradas vs Saídas */}
         <div className="rounded border border-white/10 bg-white/5 p-4">
           <div className="mb-2 text-sm text-white/70">Entradas vs Saídas (por mês)</div>
           <div className="h-72 min-w-0">
@@ -164,7 +163,6 @@ export default function YearlyReportsPage() {
           </div>
         </div>
 
-        {/* Saldo mensal */}
         <div className="rounded border border-white/10 bg-white/5 p-4">
           <div className="mb-2 text-sm text-white/70">Saldo mensal (por mês)</div>
           <div className="h-72 min-w-0">
@@ -188,27 +186,31 @@ export default function YearlyReportsPage() {
         </div>
       </div>
 
-      {/* Top categorias */}
       <div className="rounded border border-white/10 bg-white/5 p-4">
-  <div className="mb-2 text-sm text-white/70">Top 5 categorias (Saídas no ano)</div>
-  <div className="h-64 min-w-0">
-    {loading ? (
-      <div className="text-sm text-white/60">Carregando…</div>
-    ) : topCategories.length === 0 ? (
-      <div className="text-sm text-white/60">Sem saídas no ano.</div>
-    ) : (
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={topCategories} layout="vertical" margin={{ left: 40 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-          <XAxis type="number" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
-          <YAxis type="category" dataKey="name" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
-          <Tooltip
-            formatter={(v: any) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-            contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)' }}
-          />
-          <Bar dataKey="value" fill="#D4AF37" radius={[0, 6, 6, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
-    )}
-  </div>
-</div>
+        <div className="mb-2 text-sm text-white/70">Top 5 categorias (Saídas no ano)</div>
+        <div className="h-64 min-w-0">
+          {loading ? (
+            <div className="text-sm text-white/60">Carregando…</div>
+          ) : topCategories.length === 0 ? (
+            <div className="text-sm text-white/60">Sem saídas no ano.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topCategories} layout="vert
+              ical" margin={{ left: 40 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                <XAxis type="number" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
+                <YAxis type="category" dataKey="name" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
+                <Tooltip
+                  formatter={(v: any) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)' }}
+                />
+                <Bar dataKey="value" fill="#D4AF37" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+TSX
