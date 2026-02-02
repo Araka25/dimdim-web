@@ -163,7 +163,7 @@ export default function YearlyReportsPage() {
 
         <div className="rounded border border-white/10 bg-white/5 p-4">
           <div className="mb-2 text-sm text-white/70">Saldo mensal (por mês)</div>
-          <div className="h-72 min-w-0">
+          <div className="h-72 min-w-0 min-h-[288px]">
             {loading ? (
               <div className="text-sm text-white/60">Carregando…</div>
             ) : (
@@ -186,7 +186,7 @@ export default function YearlyReportsPage() {
 
       <div className="rounded border border-white/10 bg-white/5 p-4">
         <div className="mb-2 text-sm text-white/70">Top 5 categorias (Saídas no ano)</div>
-        <div className="h-64 min-w-0">
+        <div className="h-64 min-w-0 min-h-[256px]">
           {loading ? (
             <div className="text-sm text-white/60">Carregando…</div>
           ) : topCategories.length === 0 ? (
