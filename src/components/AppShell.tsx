@@ -9,6 +9,7 @@ const nav = [
   { href: '/app/transactions', label: 'Transações' },
   { href: '/app/accounts', label: 'Contas' },
   { href: '/app/categories', label: 'Categorias' },
+  { href: '/app/budgets', label: 'Orçamentos' },
   { href: '/app/reports/monthly', label: 'Relatórios (Mês)' },
   { href: '/app/reports/yearly', label: 'Relatórios (Ano)' },
 ];
