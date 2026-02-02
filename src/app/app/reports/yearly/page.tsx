@@ -28,23 +28,25 @@ export default function YearlyReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [year, setYear] = useState(() => String(new Date().getFullYear()));
+  const currentYear = new Date().getFullYear();
+  const [year, setYear] = useState(() => String(currentYear));
   const [txs, setTxs] = useState<Tx[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
 
- const startEnd = useMemo(() => {
-  const y = Number(year);
-  const safeYear = Number.isFinite(y) ? y : new Date().getFullYear();
-  const start = new Date(safeYear, 0, 1, 0, 0, 0, 0);
-  const end = new Date(safeYear + 1, 0, 1, 0, 0, 0, 0);
-  return { start, end };
-}, [year]);
+  const startEnd = useMemo(() => {
+    const y = Number(year);
+    const safeYear = Number.isFinite(y) ? y : currentYear;
+    const start = new Date(safeYear, 0, 1, 0, 0, 0, 0);
+    const end = new Date(safeYear + 1, 0, 1, 0, 0, 0, 0);
+    return { start, end, safeYear };
+  }, [year, currentYear]);
 
   async function load() {
     setLoading(true);
     setError(null);
 
     const supabase = supabaseBrowser();
+
     const [catsRes, txRes] = await Promise.all([
       supabase.from('categories').select('id,name'),
       supabase
@@ -65,7 +67,7 @@ export default function YearlyReportsPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year]);
+  }, [startEnd.safeYear]);
 
   const monthly = useMemo(() => {
     const rows = Array.from({ length: 12 }, (_, i) => ({
@@ -122,9 +124,9 @@ export default function YearlyReportsPage() {
             min="2000"
             max="2100"
             onChange={(e) => {
-  const v = e.target.value.replace(/\D/g, '');
-  setYear(v || String(new Date().getFullYear()));
-}}
+              const v = e.target.value.replace(/\D/g, '');
+              setYear(v || String(currentYear));
+            }}
             className="ml-2 w-28 rounded border border-white/15 bg-black/20 p-2"
           />
         </label>
@@ -137,11 +139,10 @@ export default function YearlyReportsPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
+        {/* Entradas vs Saídas */}
         <div className="rounded border border-white/10 bg-white/5 p-4">
           <div className="mb-2 text-sm text-white/70">Entradas vs Saídas (por mês)</div>
           <div className="h-72 min-w-0">
-  <ResponsiveContainer width="100%" height="100%">
-
             {loading ? (
               <div className="text-sm text-white/60">Carregando…</div>
             ) : (
@@ -163,11 +164,10 @@ export default function YearlyReportsPage() {
           </div>
         </div>
 
+        {/* Saldo mensal */}
         <div className="rounded border border-white/10 bg-white/5 p-4">
           <div className="mb-2 text-sm text-white/70">Saldo mensal (por mês)</div>
           <div className="h-72 min-w-0">
-  <ResponsiveContainer width="100%" height="100%">
-
             {loading ? (
               <div className="text-sm text-white/60">Carregando…</div>
             ) : (
@@ -188,6 +188,7 @@ export default function YearlyReportsPage() {
         </div>
       </div>
 
+      {/* Top categorias */}
       <div className="rounded border border-white/10 bg-white/5 p-4">
         <div className="mb-2 text-sm text-white/70">Top 5 categorias (Saídas no ano)</div>
         <div className="h-64 min-w-0">
@@ -196,7 +197,8 @@ export default function YearlyReportsPage() {
           ) : topCategories.length === 0 ? (
             <div className="text-sm text-white/60">Sem saídas no ano.</div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveCo
+            ntainer width="100%" height="100%">
               <BarChart data={topCategories} layout="vertical" margin={{ left: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                 <XAxis type="number" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
