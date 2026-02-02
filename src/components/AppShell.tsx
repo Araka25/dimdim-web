@@ -8,7 +8,8 @@ const nav = [
   { href: '/app/dashboard', label: 'Dashboard' },
   { href: '/app/transactions', label: 'Transações' },
   { href: '/app/accounts', label: 'Contas' },
-  { href: '/app/categories', label: 'Categorias' },
+  { href: '/app/categories', label: 'Categorias' }, Relatórios (Mês) → /app/reports/monthly
+• Relatórios (Ano) → /app/reports/yearly
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
