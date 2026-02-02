@@ -1,11 +1,3 @@
-export default function MonthlyReportsPage() {
-  return (
-    <section>
-      <h1>Relatório Mensal</h1>
-      <p>Em construção…</p>
-    </section>
-  );
-}
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -108,7 +100,6 @@ export default function MonthlyReportsPage() {
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
   }, [txs, categories]);
-
   const dailyBalance = useMemo(() => {
     const daysInMonth = new Date(startEnd.end.getTime() - 1).getDate();
     const byDay = Array.from({ length: daysInMonth }, (_, i) => ({
@@ -176,9 +167,7 @@ export default function MonthlyReportsPage() {
                   <XAxis dataKey="name" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
                   <YAxis tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
                   <Tooltip
-                    formatter={(v: any) =>
-                      v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-                    }
+                    formatter={(v: any) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                     contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)' }}
                   />
                   <Bar dataKey="value" fill="#D4AF37" radius={[6, 6, 0, 0]} />
@@ -200,9 +189,7 @@ export default function MonthlyReportsPage() {
                   <XAxis dataKey="day" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
                   <YAxis tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
                   <Tooltip
-                    formatter={(v: any) =>
-                      v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-                    }
+                    formatter={(v: any) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                     contentStyle={{ background: '#111', border: '1px solid rgba(255,255,255,0.15)' }}
                   />
                   <Line type="monotone" dataKey="saldo" stroke="#60a5fa" strokeWidth={2} dot={false} />
@@ -229,4 +216,3 @@ function fmtBRL(cents: number) {
   const value = cents / 100;
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
-
