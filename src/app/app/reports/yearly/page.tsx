@@ -143,7 +143,7 @@ export default function YearlyReportsPage() {
             {loading ? (
               <div className="text-sm text-white/60">Carregando…</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" aspect={2.2}>
                 <BarChart data={monthly}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                   <XAxis dataKey="month" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
@@ -167,7 +167,7 @@ export default function YearlyReportsPage() {
             {loading ? (
               <div className="text-sm text-white/60">Carregando…</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" aspect={2.2}>
                 <LineChart data={monthly}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                   <XAxis dataKey="month" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
@@ -192,7 +192,7 @@ export default function YearlyReportsPage() {
           ) : topCategories.length === 0 ? (
             <div className="text-sm text-white/60">Sem saídas no ano.</div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" aspect={2.6}>
               <BarChart data={topCategories} layout="vertical" margin={{ left: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                 <XAxis type="number" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
