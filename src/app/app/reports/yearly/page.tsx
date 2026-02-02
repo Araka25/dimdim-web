@@ -193,8 +193,7 @@ export default function YearlyReportsPage() {
             <div className="text-sm text-white/60">Sem saídas no ano.</div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topCategories} layout="vert
-              ical" margin={{ left: 40 }}>
+              <BarChart data={topCategories} layout="vertical" margin={{ left: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                 <XAxis type="number" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
                 <YAxis type="category" dataKey="name" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
@@ -211,4 +210,4 @@ export default function YearlyReportsPage() {
     </section>
   );
 }
-TSX
+
