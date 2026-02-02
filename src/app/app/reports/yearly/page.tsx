@@ -1,5 +1,4 @@
-cat > src/app/app/reports/yearly/page.tsx <<'TSX'
-'use client';
+"use client";
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
@@ -107,7 +106,6 @@ export default function YearlyReportsPage() {
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
   }, [txs, categories]);
-  return
   (
     <section className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
