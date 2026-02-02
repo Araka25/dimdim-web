@@ -32,12 +32,13 @@ export default function YearlyReportsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
 
-  const startEnd = useMemo(() => {
-    const y = Number(year);
-    const start = new Date(y, 0, 1, 0, 0, 0, 0);
-    const end = new Date(y + 1, 0, 1, 0, 0, 0, 0);
-    return { start, end };
-  }, [year]);
+ const startEnd = useMemo(() => {
+  const y = Number(year);
+  const safeYear = Number.isFinite(y) ? y : new Date().getFullYear();
+  const start = new Date(safeYear, 0, 1, 0, 0, 0, 0);
+  const end = new Date(safeYear + 1, 0, 1, 0, 0, 0, 0);
+  return { start, end };
+}, [year]);
 
   async function load() {
     setLoading(true);
@@ -120,7 +121,10 @@ export default function YearlyReportsPage() {
             value={year}
             min="2000"
             max="2100"
-            onChange={(e) => setYear(e.target.value)}
+            onChange={(e) => {
+  const v = e.target.value.replace(/\D/g, '');
+  setYear(v || String(new Date().getFullYear()));
+}}
             className="ml-2 w-28 rounded border border-white/15 bg-black/20 p-2"
           />
         </label>
