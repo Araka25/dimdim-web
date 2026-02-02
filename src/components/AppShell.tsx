@@ -4,12 +4,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
-const nav = [
-  { href: '/app/dashboard', label: 'Dashboard' },
+const nav = const nav = [
+  { href: '/app/dashboard', label: 'Painel' },
   { href: '/app/transactions', label: 'Transações' },
   { href: '/app/accounts', label: 'Contas' },
-  { href: '/app/categories', label: 'Categorias' }, Relatórios (Mês) → /app/reports/monthly
-• Relatórios (Ano) → /app/reports/yearly
+  { href: '/app/categories', label: 'Categorias' },
+  { href: '/app/reports/monthly', label: 'Relatórios (Mês)' },
+  { href: '/app/reports/yearly', label: 'Relatórios (Ano)' },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
