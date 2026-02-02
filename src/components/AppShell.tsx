@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
-const nav = const nav = [
+const nav = [
   { href: '/app/dashboard', label: 'Painel' },
   { href: '/app/transactions', label: 'Transações' },
   { href: '/app/accounts', label: 'Contas' },
