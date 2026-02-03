@@ -268,7 +268,7 @@ export default function MonthlyReportsPage() {
           ) : budgetChart.length === 0 ? (
             <div className="text-sm text-white/60">Nenhum orçamento definido para este mês.</div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" aspect={2.6}>
               <BarChart data={budgetChart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                 <XAxis dataKey="name" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
