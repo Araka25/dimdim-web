@@ -70,20 +70,29 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
           <div className="text-sm text-white/60">Nenhum orçamento definido para este mês.</div>
         ) : (
           <ResponsiveContainer width="100%" aspect={2.6}>
-            <BarChart data={budgetChart}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-              <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
-              <YAxis tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
-              <Tooltip
-                formatter={(v: any) =>
-                  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-                }
-                contentStyle={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)" }}
-              />
-              <Legend />
-              <Bar dataKey="limite" name="Limite" fill="rgba(212,175,55,0.55)" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="gasto" name="Gasto" fill="#ef4444" radius={[6, 6, 0, 0]} />
-            </BarChart>
+            <Tooltip
+  content={({ active, payload, label }) => {
+    if (!active || !payload || payload.length === 0) return null;
+
+    const gasto = (payload.find((p) => p.dataKey === "gasto")?.value as number) ?? 0;
+    const limite = (payload.find((p) => p.dataKey === "limite")?.value as number) ?? 0;
+    const pct = limite > 0 ? (gasto / limite) * 100 : 0;
+
+    const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+    return (
+      <div style={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)", padding: 12 }}>
+        <div style={{ color: "rgba(255,255,255,0.9)", fontWeight: 600, marginBottom: 6 }}>
+          {label}
+        </div>
+        <div style={{ color: "#ef4444" }}>Gasto: {brl(gasto)}</div>
+        <div style={{ color: "rgba(212,175,55,0.9)" }}>Limite: {brl(limite)}</div>
+        <div style={{ color: "rgba(255,255,255,0.75)" }}>% usado: {pct.toFixed(1)}%</div>
+      </div>
+    );
+  }}
+/>
+
           </ResponsiveContainer>
         )}
       </div>
