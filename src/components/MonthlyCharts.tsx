@@ -20,7 +20,9 @@ type Props = {
 };
 
 export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: Props) {
-  return (
+  const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return
+  (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded border border-white/10 bg-white/5 p-4">
@@ -34,9 +36,7 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
                 <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
                 <YAxis tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
                 <Tooltip
-                  formatter={(v: any) =>
-                    v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-                  }
+                  formatter={(v: any) => brl(Number(v))}
                   contentStyle={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)" }}
                 />
                 <Bar dataKey="value" fill="#D4AF37" radius={[6, 6, 0, 0]} />
@@ -53,9 +53,7 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
               <XAxis dataKey="day" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
               <YAxis tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
               <Tooltip
-                formatter={(v: any) =>
-                  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-                }
+                formatter={(v: any) => brl(Number(v))}
                 contentStyle={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)" }}
               />
               <Line type="monotone" dataKey="saldo" stroke="#60a5fa" strokeWidth={2} dot={false} />
@@ -63,36 +61,53 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
           </ResponsiveContainer>
         </div>
       </div>
-
       <div className="rounded border border-white/10 bg-white/5 p-4">
         <div className="mb-2 text-sm text-white/70">Orçamento vs Gasto (categorias com orçamento)</div>
         {budgetChart.length === 0 ? (
           <div className="text-sm text-white/60">Nenhum orçamento definido para este mês.</div>
         ) : (
           <ResponsiveContainer width="100%" aspect={2.6}>
-            <Tooltip
-  content={({ active, payload, label }) => {
-    if (!active || !payload || payload.length === 0) return null;
+            <BarChart data={budgetChart}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+              <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
+              <YAxis tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
 
-    const gasto = (payload.find((p) => p.dataKey === "gasto")?.value as number) ?? 0;
-    const limite = (payload.find((p) => p.dataKey === "limite")?.value as number) ?? 0;
-    const pct = limite > 0 ? (gasto / limite) * 100 : 0;
-
-    const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
-    return (
-      <div style={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)", padding: 12 }}>
-        <div style={{ color: "rgba(255,255,255,0.9)", fontWeight: 600, marginBottom: 6 }}>
-          {label}
-        </div>
-        <div style={{ color: "#ef4444" }}>Gasto: {brl(gasto)}</div>
-        <div style={{ color: "rgba(212,175,55,0.9)" }}>Limite: {brl(limite)}</div>
-        <div style={{ color: "rgba(255,255,255,0.75)" }}>% usado: {pct.toFixed(1)}%</div>
-      </div>
-    );
-  }}
-/>
-
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload || payload.length === 0) return null;
+                  const gasto =
+                    (payload.find((p) => p.dataKey === "gasto")?.value as number | undefined) ?? 0;
+                  const limite =
+                    (payload.find((p) => p.dataKey === "limite")?.value as number | undefined) ?? 0;
+                  const pct = limite > 0 ? (gasto / limite) * 100 : 0;
+                  return (
+                    <div
+                      style={{
+                        background: "#111",
+                        border: "1px solid rgba(255,255,255,0.15)",
+                        padding: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: "rgba(255,255,255,0.9)",
+                          fontWeight: 600,
+                          marginBottom: 6,
+                        }}
+                      >
+                        {label}
+                      </div>
+                      <div style={{ color: "#ef4444" }}>Gasto: {brl(gasto)}</div>
+                      <div style={{ color: "rgba(212,175,55,0.9)" }}>Limite: {brl(limite)}</div>
+                      <div style={{ color: "rgba(255,255,255,0.75)" }}>% usado: {pct.toFixed(1)}%</div>
+                    </div>
+                  );
+                }}
+              />
+              <Legend />
+              <Bar dataKey="limite" name="Limite" fill="rgba(212,175,55,0.55)" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="gasto" name="Gasto" fill="#ef4444" radius={[6, 6, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         )}
       </div>
