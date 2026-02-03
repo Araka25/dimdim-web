@@ -17,6 +17,7 @@ type Category = { id: string; name: string };
 
 export default function YearlyReportsPage() {
   const currentYear = new Date().getFullYear();
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [year, setYear] = useState(() => String(currentYear));
@@ -90,6 +91,13 @@ export default function YearlyReportsPage() {
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
   }, [txs, categories]);
+  const totals = useMemo(() => {
+    const incomeCents = txs.filter((t) => t.kind === "income").reduce((a, t) => a + (t.amount_cents || 0), 0);
+    const expenseCents = txs.filter((t) => t.kind === "expense").reduce((a, t) => a + (t.amount_cents || 0), 0);
+    const balanceCents = incomeCents - expenseCents;
+    const savingsRate = incomeCents > 0 ? (balanceCents / incomeCents) * 100 : null;
+    return { incomeCents, expenseCents, balanceCents, savingsRate };
+  }, [txs]);
 
   return (
     <section className="space-y-6">
@@ -119,7 +127,33 @@ export default function YearlyReportsPage() {
         <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>
       )}
 
+      <div className="grid gap-3 md:grid-cols-4">
+        <Card title="Entradas (ano)">{fmtBRL(totals.incomeCents)}</Card>
+        <Card title="Saídas (ano)">{fmtBRL(totals.expenseCents)}</Card>
+        <Card title="Saldo (ano)">{fmtBRL(totals.balanceCents)}</Card>
+        <Card title="Taxa de poupança">{fmtPercent(totals.savingsRate)}</Card>
+      </div>
+
       <YearlyCharts loading={loading} monthly={monthly} topCategories={topCategories} />
     </section>
   );
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded border border-white/10 bg-white/5 p-4">
+      <div className="text-xs text-white/60">{title}</div>
+      <div className="mt-2 text-xl font-semibold">{children}</div>
+    </div>
+  );
+}
+
+function fmtBRL(cents: number) {
+  const value = cents / 100;
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function fmtPercent(v: number | null) {
+  if (v === null) return "—";
+  return v.toFixed(1) + "%";
 }
