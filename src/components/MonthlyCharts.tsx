@@ -13,16 +13,14 @@ import {
   Legend,
 } from "recharts";
 
-export function MonthlyCharts({
-  expenseByCategory,
-  dailyBalance,
-  budgetChart,
-}: {
+type Props = {
   expenseByCategory: { name: string; value: number }[];
   dailyBalance: { day: number; saldo: number }[];
   budgetChart: { name: string; gasto: number; limite: number; pct: number }[];
-}) 
-return (
+};
+
+export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: Props) {
+  return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded border border-white/10 bg-white/5 p-4">
