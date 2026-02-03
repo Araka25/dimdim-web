@@ -1,5 +1,4 @@
-cat > src/app/app/reports/monthly/page.tsx <<'TSX'
-"use client";
+"use client"
 
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
@@ -113,4 +112,3 @@ export default function MonthlyReportsPage() {
     </section>
   );
 }
-TSX
