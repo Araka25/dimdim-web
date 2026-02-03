@@ -130,7 +130,12 @@ export default function YearlyReportsPage() {
       <div className="grid gap-3 md:grid-cols-4">
         <Card title="Entradas (ano)">{fmtBRL(totals.incomeCents)}</Card>
         <Card title="Saídas (ano)">{fmtBRL(totals.expenseCents)}</Card>
-        <Card title="Saldo (ano)">{fmtBRL(totals.balanceCents)}</Card>
+        <div className="rounded border border-white/10 bg-white/5 p-4">
+  <div className="text-xs text-white/60">Saldo (ano)</div>
+  <div className={"mt-2 text-xl font-semibold " + (totals.balanceCents >= 0 ? "text-green-400" : "text-red-400")}>
+    {fmtBRL(totals.balanceCents)}
+  </div>
+</div>
         <Card title="Taxa de poupança">{fmtPercent(totals.savingsRate)}</Card>
       </div>
 
