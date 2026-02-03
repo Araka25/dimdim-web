@@ -167,6 +167,9 @@ export default function MonthlyReportsPage() {
     return { over, near };
   }, [budgetChart]);
   return
+  <div className="text-xs text-white/50">
+  debug: txs={txs.length} budgets={budgets.length} categories={categories.length} loading={String(loading)} month={month}
+</div>
   (
     <section className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
