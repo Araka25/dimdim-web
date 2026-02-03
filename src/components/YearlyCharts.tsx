@@ -22,6 +22,17 @@ type Props = {
 
 export default function YearlyCharts({ loading, monthly, topCategories }: Props): React.ReactElement {
   const brl = (v: any) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  const balanceStats = React.useMemo(() => {
+    if (!monthly || monthly.length === 0) return { pos: 0, neg: 0 };
+    let pos = 0;
+    let neg = 0;
+    for (const m of monthly) {
+      if (m.balance > 0) pos++;
+      if (m.balance < 0) neg++;
+    }
+    return { pos, neg };
+  }, [monthly]);
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2">
@@ -48,7 +59,17 @@ export default function YearlyCharts({ loading, monthly, topCategories }: Props)
         </div>
 
         <div className="rounded border border-white/10 bg-white/5 p-4">
-          <div className="mb-2 text-sm text-white/70">Saldo mensal (por mês)</div>
+          <div className="mb-2 flex items-center justify-between gap-2 text-sm text-white/70">
+            <span>Saldo mensal (por mês)</span>
+            {!loading && (
+              <span className="text-xs text-white/60">
+                <span className="text-green-400">+{balanceStats.pos}</span>
+                {" · "}
+                <span className="text-red-400">-{balanceStats.neg}</span>
+              </span>
+            )}
+          </div>
+
           {loading ? (
             <div className="text-sm text-white/60">Carregando…</div>
           ) : (
