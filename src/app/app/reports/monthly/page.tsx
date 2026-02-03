@@ -207,7 +207,7 @@ export default function MonthlyReportsPage() {
             ) : expenseByCategory.length === 0 ? (
               <div className="text-sm text-white/60">Sem gastos no mês.</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" aspect={2.2}>
                 <BarChart data={expenseByCategory}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                   <XAxis dataKey="name" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
@@ -231,7 +231,7 @@ export default function MonthlyReportsPage() {
             {loading ? (
               <div className="text-sm text-white/60">Carregando…</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" aspect={2.2}>
                 <LineChart data={dailyBalance}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                   <XAxis dataKey="day" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
