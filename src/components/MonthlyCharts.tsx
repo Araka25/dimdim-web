@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -13,16 +14,20 @@ import {
   Legend,
 } from "recharts";
 
-export type MonthlyChartsProps = {
+type Props = {
   expenseByCategory: { name: string; value: number }[];
   dailyBalance: { day: number; saldo: number }[];
   budgetChart: { name: string; gasto: number; limite: number; pct: number }[];
 };
 
-function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: MonthlyChartsProps) {
-  const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  return
-  (
+export default function MonthlyCharts({
+  expenseByCategory,
+  dailyBalance,
+  budgetChart,
+}: Props): React.ReactElement {
+  const brl = (v: number) =>
+    v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded border border-white/10 bg-white/5 p-4">
@@ -64,6 +69,7 @@ function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: Monthly
 
       <div className="rounded border border-white/10 bg-white/5 p-4">
         <div className="mb-2 text-sm text-white/70">Orçamento vs Gasto (categorias com orçamento)</div>
+
         {budgetChart.length === 0 ? (
           <div className="text-sm text-white/60">Nenhum orçamento definido para este mês.</div>
         ) : (
@@ -72,30 +78,15 @@ function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: Monthly
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
               <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
               <YAxis tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
-
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload || payload.length === 0) return null;
-
                   const gasto = Number(payload.find((p) => p.dataKey === "gasto")?.value ?? 0);
                   const limite = Number(payload.find((p) => p.dataKey === "limite")?.value ?? 0);
                   const pct = limite > 0 ? (gasto / limite) * 100 : 0;
-
                   return (
-                    <div
-                      style={{
-                        background: "#111",
-                        border: "1px solid rgba(255,255,255,0.15)",
-                        padding: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          color: "rgba(255,255,255,0.9)",
-                          fontWeight: 600,
-                          marginBottom: 6,
-                        }}
-                      >
+                    <div style={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)", padding: 12 }}>
+                      <div style={{ color: "rgba(255,255,255,0.9)", fontWeight: 600, marginBottom: 6 }}>
                         {label}
                       </div>
                       <div style={{ color: "#ef4444" }}>Gasto: {brl(gasto)}</div>
@@ -105,10 +96,10 @@ function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: Monthly
                   );
                 }}
               />
-
               <Legend />
               <Bar dataKey="limite" name="Limite" fill="rgba(212,175,55,0.55)" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="gasto" name="Gasto" fill="#ef4444" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="gasto" name="Gasto" fill="#ef4444"
+              radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -116,5 +107,3 @@ function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: Monthly
     </div>
   );
 }
-
-export default MonthlyCharts;

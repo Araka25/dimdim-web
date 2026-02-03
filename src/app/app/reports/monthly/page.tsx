@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
-import type { MonthlyChartsProps } from "@/components/MonthlyCharts";
 
-const MonthlyCharts = dynamic(() => import("@/components/MonthlyCharts"), { ssr: false });
+const MonthlyCharts = dynamic<any>(
+  () => import("@/components/MonthlyCharts").then((m) => m.default as any),
+  { ssr: false }
+);
 
 type Tx = {
   occurred_at: string;
@@ -19,7 +21,7 @@ type Category = { id: string; name: string };
 type Budget = {
   category_id: string;
   limit_cents: number;
-  month_date: string; // YYYY-MM-01
+  month_date: string;
 };
 
 export default function MonthlyReportsPage() {
@@ -44,36 +46,32 @@ export default function MonthlyReportsPage() {
     return { start, end };
   }, [month]);
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-
-    const supabase = supabaseBrowser();
-
-    const [catsRes, txRes, budRes] = await Promise.all([
-      supabase.from("categories").select("id,name"),
-      supabase
-        .from("transactions")
-        .select("occurred_at,kind,amount_cents,category_id")
-        .gte("occurred_at", startEnd.start.toISOString())
-        .lt("occurred_at", startEnd.end.toISOString()),
-      supabase.from("budgets").select("category_id,limit_cents,month_date").eq("month_date", monthDate),
-    ]);
-
-    if (catsRes.error) setError(catsRes.error.message);
-    if (txRes.error) setError(txRes.error.message);
-    if (budRes.error) setError(budRes.error.message);
-
-    setCategories((catsRes.data as Category[]) || []);
-    setTxs((txRes.data as Tx[]) || []);
-    setBudgets((budRes.data as Budget[]) || []);
-    setLoading(false);
-  }
-
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month]);
+    (async () => {
+      setLoading(true);
+      setError(null);
+
+      const supabase = supabaseBrowser();
+      const [catsRes, txRes, budRes] = await Promise.all([
+        supabase.from("categories").select("id,name"),
+        supabase
+          .from("transactions")
+          .select("occurred_at,kind,amount_cents,category_id")
+          .gte("occurred_at", startEnd.start.toISOString())
+          .lt("occurred_at", startEnd.end.toISOString()),
+        supabase.from("budgets").select("category_id,limit_cents,month_date").eq("month_date", monthDate),
+      ]);
+
+      if (catsRes.error) setError(catsRes.error.message);
+      if (txRes.error) setError(txRes.error.message);
+      if (budRes.error) setError(budRes.error.message);
+
+      setCategories((catsRes.data as Category[]) || []);
+      setTxs((txRes.data as Tx[]) || []);
+      setBudgets((budRes.data as Budget[]) || []);
+      setLoading(false);
+    })();
+  }, [month, monthDate, startEnd.start, startEnd.end]);
 
   const income = useMemo(
     () => txs.filter((t) => t.kind === "income").reduce((a, t) => a + (t.amount_cents || 0), 0),
@@ -104,7 +102,8 @@ export default function MonthlyReportsPage() {
       .map(([name, cents]) => ({ name, value: cents / 100 }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [txs, categories]);const dailyBalance = useMemo(() => {
+  }, [txs, categories]);
+  const dailyBalance = useMemo(() => {
     const daysInMonth = new Date(startEnd.end.getTime() - 1).getDate();
     const byDay = Array.from({ length: daysInMonth }, (_, i) => ({ day: i + 1, delta: 0 }));
 
@@ -120,7 +119,7 @@ export default function MonthlyReportsPage() {
       acc += x.delta;
       return { day: x.day, saldo: acc / 100 };
     });
-  }, [txs, startEnd]);
+  }, [txs, startEnd.end]);
 
   const budgetChart = useMemo(() => {
     const nameById = new Map(categories.map((c) => [c.id, c.name]));
@@ -147,11 +146,6 @@ export default function MonthlyReportsPage() {
       })
       .sort((a, b) => b.gasto - a.gasto);
   }, [categories, budgets, txs]);
-
-  const chartsProps: MonthlyChartsProps = useMemo(
-    () => ({ expenseByCategory, dailyBalance, budgetChart }),
-    [expenseByCategory, dailyBalance, budgetChart]
-  );
 
   return (
     <section className="space-y-6">
@@ -183,7 +177,11 @@ export default function MonthlyReportsPage() {
         <Card title="Taxa de poupança">{fmtPercent(savingsRate)}</Card>
       </div>
 
-      {loading ? <div className="text-sm text-white/60">Carregando…</div> : <MonthlyCharts {...chartsProps} />}
+      {loading ? (
+        <div className="text-sm text-white/60">Carregando…</div>
+      ) : (
+        <MonthlyCharts expenseByCategory={expenseByCategory} dailyBalance={dailyBalance} budgetChart={budgetChart} />
+      )}
     </section>
   );
 }
