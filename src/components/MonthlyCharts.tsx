@@ -13,13 +13,13 @@ import {
   Legend,
 } from "recharts";
 
-type Props = {
+export type MonthlyChartsProps = {
   expenseByCategory: { name: string; value: number }[];
   dailyBalance: { day: number; saldo: number }[];
   budgetChart: { name: string; gasto: number; limite: number; pct: number }[];
 };
 
-export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: Props) {
+function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: MonthlyChartsProps) {
   const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   return
   (
@@ -61,6 +61,7 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
           </ResponsiveContainer>
         </div>
       </div>
+
       <div className="rounded border border-white/10 bg-white/5 p-4">
         <div className="mb-2 text-sm text-white/70">Orçamento vs Gasto (categorias com orçamento)</div>
         {budgetChart.length === 0 ? (
@@ -75,11 +76,11 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload || payload.length === 0) return null;
-                  const gasto =
-                    (payload.find((p) => p.dataKey === "gasto")?.value as number | undefined) ?? 0;
-                  const limite =
-                    (payload.find((p) => p.dataKey === "limite")?.value as number | undefined) ?? 0;
+
+                  const gasto = Number(payload.find((p) => p.dataKey === "gasto")?.value ?? 0);
+                  const limite = Number(payload.find((p) => p.dataKey === "limite")?.value ?? 0);
                   const pct = limite > 0 ? (gasto / limite) * 100 : 0;
+
                   return (
                     <div
                       style={{
@@ -104,6 +105,7 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
                   );
                 }}
               />
+
               <Legend />
               <Bar dataKey="limite" name="Limite" fill="rgba(212,175,55,0.55)" radius={[6, 6, 0, 0]} />
               <Bar dataKey="gasto" name="Gasto" fill="#ef4444" radius={[6, 6, 0, 0]} />
@@ -114,3 +116,5 @@ export function MonthlyCharts({ expenseByCategory, dailyBalance, budgetChart }: 
     </div>
   );
 }
+
+export default MonthlyCharts;

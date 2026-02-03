@@ -3,11 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import type { MonthlyChartsProps } from "@/components/MonthlyCharts";
 
-const MonthlyCharts = dynamic(
-  () => import("@/components/MonthlyCharts").then((m) => m.MonthlyCharts),
-  { ssr: false }
-);
+const MonthlyCharts = dynamic(() => import("@/components/MonthlyCharts"), { ssr: false });
 
 type Tx = {
   occurred_at: string;
@@ -15,6 +13,7 @@ type Tx = {
   amount_cents: number;
   category_id: string | null;
 };
+
 type Category = { id: string; name: string };
 
 type Budget = {
@@ -105,9 +104,7 @@ export default function MonthlyReportsPage() {
       .map(([name, cents]) => ({ name, value: cents / 100 }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [txs, categories]);
-
-  const dailyBalance = useMemo(() => {
+  }, [txs, categories]);const dailyBalance = useMemo(() => {
     const daysInMonth = new Date(startEnd.end.getTime() - 1).getDate();
     const byDay = Array.from({ length: daysInMonth }, (_, i) => ({ day: i + 1, delta: 0 }));
 
@@ -124,6 +121,7 @@ export default function MonthlyReportsPage() {
       return { day: x.day, saldo: acc / 100 };
     });
   }, [txs, startEnd]);
+
   const budgetChart = useMemo(() => {
     const nameById = new Map(categories.map((c) => [c.id, c.name]));
     const limitByCat = new Map(budgets.map((b) => [b.category_id, b.limit_cents]));
@@ -150,11 +148,10 @@ export default function MonthlyReportsPage() {
       .sort((a, b) => b.gasto - a.gasto);
   }, [categories, budgets, txs]);
 
-  const budgetAlerts = useMemo(() => {
-    const over = budgetChart.filter((x) => x.pct >= 100).length;
-    const near = budgetChart.filter((x) => x.pct >= 80 && x.pct < 100).length;
-    return { over, near };
-  }, [budgetChart]);
+  const chartsProps: MonthlyChartsProps = useMemo(
+    () => ({ expenseByCategory, dailyBalance, budgetChart }),
+    [expenseByCategory, dailyBalance, budgetChart]
+  );
 
   return (
     <section className="space-y-6">
@@ -176,9 +173,7 @@ export default function MonthlyReportsPage() {
       </div>
 
       {error && (
-        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-          {error}
-        </div>
+        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>
       )}
 
       <div className="grid gap-3 md:grid-cols-4">
@@ -188,25 +183,7 @@ export default function MonthlyReportsPage() {
         <Card title="Taxa de poupança">{fmtPercent(savingsRate)}</Card>
       </div>
 
-      {!loading ? (
-        <>
-          <MonthlyCharts
-            expenseByCategory={expenseByCategory}
-            dailyBalance={dailyBalance}
-            budgetChart={budgetChart}
-          />
-
-          {budgetChart.length > 0 && (
-            <div className="text-xs text-white/60">
-              {budgetAlerts.over > 0 ? `${budgetAlerts.over} estouraram` : "0 estouraram"}
-              {" · "}
-              {budgetAlerts.near > 0 ? `${budgetAlerts.near} acima de 80%` : "0 acima de 80%"}
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="text-sm text-white/60">Carregando…</div>
-      )}
+      {loading ? <div className="text-sm text-white/60">Carregando…</div> : <MonthlyCharts {...chartsProps} />}
     </section>
   );
 }
