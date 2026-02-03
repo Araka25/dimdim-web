@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
-const MonthlyCharts = dynamic<any>(
-  () => import("@/components/MonthlyCharts").then((m) => m.default as any),
+const MonthlyCharts = dynamic(
+  () => import("@/components/MonthlyCharts").then((m) => m.default),
   { ssr: false }
 );
 
@@ -21,7 +21,7 @@ type Category = { id: string; name: string };
 type Budget = {
   category_id: string;
   limit_cents: number;
-  month_date: string;
+  month_date: string; // YYYY-MM-01
 };
 
 export default function MonthlyReportsPage() {
@@ -36,6 +36,8 @@ export default function MonthlyReportsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
+
+  const budgetSectionRef = useRef<HTMLDivElement | null>(null);
 
   const monthDate = useMemo(() => `${month}-01`, [month]);
 
@@ -52,6 +54,7 @@ export default function MonthlyReportsPage() {
       setError(null);
 
       const supabase = supabaseBrowser();
+
       const [catsRes, txRes, budRes] = await Promise.all([
         supabase.from("categories").select("id,name"),
         supabase
@@ -59,7 +62,10 @@ export default function MonthlyReportsPage() {
           .select("occurred_at,kind,amount_cents,category_id")
           .gte("occurred_at", startEnd.start.toISOString())
           .lt("occurred_at", startEnd.end.toISOString()),
-        supabase.from("budgets").select("category_id,limit_cents,month_date").eq("month_date", monthDate),
+        supabase
+          .from("budgets")
+          .select("category_id,limit_cents,month_date")
+          .eq("month_date", monthDate),
       ]);
 
       if (catsRes.error) setError(catsRes.error.message);
@@ -147,6 +153,12 @@ export default function MonthlyReportsPage() {
       .sort((a, b) => b.gasto - a.gasto);
   }, [categories, budgets, txs]);
 
+  const budgetStats = useMemo(() => {
+    const over = budgetChart.filter((b) => b.pct >= 100).length;
+    const near = budgetChart.filter((b) => b.pct >= 80 && b.pct < 100).length;
+    const ok = budgetChart.filter((b) => b.pct < 80).length;
+    return { over, near, ok };
+  }, [budgetChart]);
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -155,15 +167,32 @@ export default function MonthlyReportsPage() {
           <p className="text-sm text-white/60">Resumo + gráficos do mês selecionado</p>
         </div>
 
-        <label className="text-sm text-white/70">
-          Mês:{" "}
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="ml-2 rounded border border-white/15 bg-black/20 p-2"
-          />
-        </label>
+        <div className="flex flex-wrap items-end gap-3">
+          {!loading && budgetChart.length > 0 && (
+            <button
+              type="button"
+              onClick={() => budgetSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 hover:bg-white/10"
+              title="Ver detalhes do orçamento"
+            >
+              <span className="text-red-400">{budgetStats.over} estourados</span>
+              {" · "}
+              <span className="text-yellow-400">{budgetStats.near} em 80%+</span>
+              {" · "}
+              <span className="text-green-400">{budgetStats.ok} ok</span>
+            </button>
+          )}
+
+          <label className="text-sm text-white/70">
+            Mês:{" "}
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="ml-2 rounded border border-white/15 bg-black/20 p-2"
+            />
+          </label>
+        </div>
       </div>
 
       {error && (
@@ -173,14 +202,34 @@ export default function MonthlyReportsPage() {
       <div className="grid gap-3 md:grid-cols-4">
         <Card title="Entradas">{fmtBRL(income)}</Card>
         <Card title="Saídas">{fmtBRL(expense)}</Card>
-        <Card title="Saldo">{fmtBRL(balance)}</Card>
-        <Card title="Taxa de poupança">{fmtPercent(savingsRate)}</Card>
+
+        <div className="rounded border border-white/10 bg-white/5 p-4">
+          <div className="text-xs text-white/60">Saldo</div>
+          <div className={"mt-2 text-xl font-semibold " + (balance >= 0 ? "text-green-400" : "text-red-400")}>
+            {fmtBRL(balance)}
+          </div>
+        </div>
+
+        <div className="rounded border border-white/10 bg-white/5 p-4">
+          <div className="text-xs text-white/60">Taxa de poupança</div>
+          <div
+            className={
+              "mt-2 text-xl font-semibold " +
+              (savingsRate === null ? "text-white" : savingsRate >= 0 ? "text-green-400" : "text-red-400")
+            }
+          >
+            {fmtPercent(savingsRate)}
+          </div>
+        </div>
       </div>
 
       {loading ? (
         <div className="text-sm text-white/60">Carregando…</div>
       ) : (
-        <MonthlyCharts expenseByCategory={expenseByCategory} dailyBalance={dailyBalance} budgetChart={budgetChart} />
+        <>
+          <div ref={budgetSectionRef} />
+          <MonthlyCharts expenseByCategory={expenseByCategory} dailyBalance={dailyBalance} budgetChart={budgetChart} />
+        </>
       )}
     </section>
   );
