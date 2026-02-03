@@ -167,6 +167,15 @@ export default function MonthlyReportsPage() {
     return { over, near };
   }, [budgetChart]);
   return
+  return (
+  <section className="space-y-6">
+    <div className="p-3 rounded bg-yellow-500 text-black font-semibold">
+      DEBUG: Monthly carregou (se você está vendo isso, a página está renderizando)
+    </div>
+    ...
+    <div className="text-xs text-white/70">
+  debug: loading={String(loading)} txs={txs.length} cats={categories.length} budgets={budgets.length} month={month}
+</div>
   <div className="text-xs text-white/50">
   debug: txs={txs.length} budgets={budgets.length} categories={categories.length} loading={String(loading)} month={month}
 </div>
