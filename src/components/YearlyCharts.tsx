@@ -80,10 +80,24 @@ export default function YearlyCharts({ loading, monthly, topCategories }: Props)
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
               <XAxis type="number" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
               <YAxis type="category" dataKey="name" tick={{ fill: "rgba(255,255,255,0.7)", fontSize: 12 }} />
+
               <Tooltip
-                formatter={brl}
-                contentStyle={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)" }}
+                content={({ active, payload, label }) => {
+                  if (!active || !payload || payload.length === 0) return null;
+
+                  const value = Number(payload[0]?.value ?? 0);
+
+                  return (
+                    <div style={{ background: "#111", border: "1px solid rgba(255,255,255,0.15)", padding: 12 }}>
+                      <div style={{ color: "rgba(255,255,255,0.9)", fontWeight: 600, marginBottom: 6 }}>
+                        {label}
+                      </div>
+                      <div style={{ color: "rgba(212,175,55,0.9)" }}>Gasto: {brl(value)}</div>
+                    </div>
+                  );
+                }}
               />
+
               <Bar dataKey="value" fill="#D4AF37" radius={[0, 6, 6, 0]} />
             </BarChart>
           </ResponsiveContainer>
