@@ -14,6 +14,7 @@ type Tx = {
   kind: 'income' | 'expense';
   account_id: string | null;
   category_id: string | null;
+  user_id: string;
   receipt_path: string | null;
 
   account?: Account | null;
@@ -84,16 +85,17 @@ export default function TransactionsPage() {
     setError(null);
 
     const supabase = supabaseBrowser();
-
     const [a, c, t] = await Promise.all([
       supabase.from('accounts').select('id,name').order('created_at', { ascending: false }),
       supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
       supabase
         .from('transactions')
-        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,receipt_path')
+        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path')
         .order('occurred_at', { ascending: false })
         .limit(200),
-    ]);if (a.error) setError(a.error.message);
+    ]);
+
+    if (a.error) setError(a.error.message);
     if (c.error) setError(c.error.message);
     if (t.error) setError(t.error.message);
 
@@ -138,7 +140,6 @@ export default function TransactionsPage() {
     setError(null);
 
     const cents = Math.round(Number(amount.replace(',', '.')) * 100);
-
     if (!dateStr) return setError('Data obrigatória');
     if (!description.trim()) return setError('Descrição obrigatória');
     if (!Number.isFinite(cents) || cents <= 0) return setError('Valor inválido');
@@ -146,22 +147,22 @@ export default function TransactionsPage() {
     const occurredAt = new Date(`${dateStr}T12:00:00.000Z`).toISOString();
 
     const supabase = supabaseBrowser();
+    const { data: authData, error: authErr } = await supabase.auth.getUser();
+    if (authErr) return setError(authErr.message);
 
-const { data: authData, error: authErr } = await supabase.auth.getUser();
-if (authErr) return setError(authErr.message);
+    const userId = authData.user?.id;
+    if (!userId) return setError('Sessão expirada. Faça login novamente.');
 
-const userId = authData.user?.id;
-if (!userId) return setError('Sessão expirada. Faça login novamente.');
+    const { error } = await supabase.from('transactions').insert({
+      user_id: userId,
+      description: description.trim(),
+      amount_cents: cents,
+      kind,
+      occurred_at: occurredAt,
+      account_id: accountId || null,
+      category_id: categoryId || null,
+    });
 
-const { error } = await supabase.from('transactions').insert({
-  user_id: userId,
-  description: description.trim(),
-  amount_cents: cents,
-  kind,
-  occurred_at: occurredAt,
-  account_id: accountId || null,
-  category_id: categoryId || null,
-});
     if (error) return setError(error.message);
 
     setDescription('');
@@ -173,7 +174,6 @@ const { error } = await supabase.from('transactions').insert({
     setError(null);
 
     const cents = Math.round(Number(editAmount.replace(',', '.')) * 100);
-
     if (!editDateStr) return setError('Data obrigatória');
     if (!editDescription.trim()) return setError('Descrição obrigatória');
     if (!Number.isFinite(cents) || cents <= 0) return setError('Valor inválido');
@@ -224,13 +224,12 @@ const { error } = await supabase.from('transactions').insert({
     try {
       const supabase = supabaseBrowser();
       const ext = getExt(file);
-
-      // 1 comprovante por transação (sobrescreve)
       const path = `${txId}.${ext}`;
 
-      const { error: upErr } = await supabase.storage
-        .from('receipts').upload(path, file, { upsert: true, contentType: file.type });
-
+      const { error: upErr } = await supabase.storage.from('receipts').upload(path, file, {
+        upsert: true,
+        contentType: file.type,
+      });
       if (upErr) throw new Error(upErr.message);
 
       const { error: dbErr } = await supabase.from('transactions').update({ receipt_path: path }).eq('id', txId);
@@ -262,7 +261,6 @@ const { error } = await supabase.from('transactions').insert({
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || 'Falha ao ler comprovante');
 
-      // entra em edição se ainda não estiver
       if (editingId !== tx.id) startEdit(tx);
 
       if (json?.dateStr) setEditDateStr(String(json.dateStr));
@@ -284,38 +282,22 @@ const { error } = await supabase.from('transactions').insert({
       </div>
 
       <form onSubmit={addTx} className="grid gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-8">
-        <select
-          className="rounded border border-white/15 bg-black/20 p-3"
-          value={kind}
-          onChange={(e) => setKind(e.target.value as any)}
-        >
+        <select className="rounded border border-white/15 bg-black/20 p-3" value={kind} onChange={(e) => setKind(e.target.value as any)}>
           <option value="expense">Saída</option>
           <option value="income">Entrada</option>
         </select>
 
-        <select
-          className="rounded border border-white/15 bg-black/20 p-3"
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-        >
+        <select className="rounded border border-white/15 bg-black/20 p-3" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
           <option value="">(Conta)</option>
           {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
+            <option key={a.id} value={a.id}>{a.name}</option>
           ))}
         </select>
 
-        <select
-          className="rounded border border-white/15 bg-black/20 p-3"
-          value={categoryId}
-          onChange={(e) => setCategoryId(e.target.value)}
-        >
+        <select className="rounded border border-white/15 bg-black/20 p-3" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
           <option value="">(Categoria)</option>
           {filteredCategories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
+            <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
 
@@ -344,9 +326,7 @@ const { error } = await supabase.from('transactions').insert({
         </div>
       </form>
 
-      {error && (
-        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>
-      )}
+      {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
       <div className="overflow-hidden rounded border border-white/10">
         <div className="grid grid-cols-13 gap-2 border-b border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60">
@@ -365,32 +345,24 @@ const { error } = await supabase.from('transactions').insert({
         ) : (
           txs.map((r) => {
             const editing = editingId === r.id;
+            const busy = busyId === r.id;
+            const receiptUrl = r.receipt_path ? receiptPublicUrl(r.receipt_path) : null;
 
             if (!editing) {
               return (
                 <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 px-4 py-3">
-                  <div className="col-span-2 text-sm text-white/70">
-                    {new Date(r.occurred_at).toLocaleDateString('pt-BR')}
-                  </div>
+                  <div className="col-span-2 text-sm text-white/70">{new Date(r.occurred_at).toLocaleDateString('pt-BR')}</div>
                   <div className="col-span-4 text-sm">{r.description}</div>
                   <div className="col-span-2 text-sm text-white/70">{r.account?.name ?? '-'}</div>
                   <div className="col-span-2 text-sm text-white/70">{r.category?.name ?? '-'}</div>
 
-                  <div
-                    className={
-                      'col-span-2 text-right text-sm font-medium ' +
-                      (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')
-                    }
-                  >
+                  <div className={'col-span-2 text-right text-sm font-medium' + (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')}>
                     {r.kind === 'income' ? '+ ' : '- '}
                     {fmtBRL(r.amount_cents)}
                   </div>
 
                   <div className="col-span-1 flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => startEdit(r)}
-                      className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
-                    >
+                    <button onClick={() => startEdit(r)} className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
                       Editar
                     </button>
                     <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">
@@ -399,11 +371,7 @@ const { error } = await supabase.from('transactions').insert({
                   </div>
                 </div>
               );
-            }
-
-            const busy = busyId === r.id;
-            const receiptUrl = r.receipt_path ? receiptPublicUrl(r.receipt_path) : null;
-            return(
+            }return(
               <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
                 <div className="col-span-2">
                   <input
@@ -471,18 +439,12 @@ const { error } = await supabase.from('transactions').insert({
                       onClick={() => void parseReceipt(r)}
                       className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
                       disabled={busy || !r.receipt_path}
-                      title={!r.receipt_path ? 'Anexe um comprovante primeiro' : 'Ler comprovante e preencher campos'}
                     >
                       {busy ? 'Lendo…' : 'Ler'}
                     </button>
 
                     {receiptUrl && (
-                      <a
-                        href={receiptUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
-                      >
+                      <a href={receiptUrl} target="_blank" rel="noreferrer" className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
                         Ver
                       </a>
                     )}
@@ -490,58 +452,31 @@ const { error } = await supabase.from('transactions').insert({
                 </div>
 
                 <div className="col-span-2">
-                  <select
-                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
-                    value={editAccountId}
-                    onChange={(e) => setEditAccountId(e.target.value)}
-                  >
+                  <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
                     <option value="">(Conta)</option>
                     {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
+                      <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </select>
                 </div>
 
                 <div className="col-span-2">
-                  <select
-                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
-                    value={editCategoryId}
-                    onChange={(e) => setEditCategoryId(e.target.value)}
-                  >
+                  <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editCategoryId} onChange={(e) => setEditCategoryId(e.target.value)}>
                     <option value="">(Categoria)</option>
                     {filteredEditCategories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
+                      <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                 </div>
 
                 <div className="col-span-3 flex items-center justify-end gap-2">
-                  <button
-                    onClick={() => void saveEdit(r.id)}
-                    className="rounded bg-white px-3 py-2 text-xs font-medium text-black"
-                    type="button"
-                    disabled={busy}
-                  >
+                  <button onClick={() => void saveEdit(r.id)} className="rounded bg-white px-3 py-2 text-xs font-medium text-black" type="button" disabled={busy}>
                     Salvar
                   </button>
-                  <button
-                    onClick={cancelEdit}
-                    className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10"
-                    type="button"
-                    disabled={busy}
-                  >
+                  <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
                     Cancelar
                   </button>
-                  <button
-                    onClick={() => void removeTx(r.id)}
-                    className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"
-                    type="button"
-                    disabled={busy}
-                  >
+                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
                     Remover
                   </button>
                 </div>
