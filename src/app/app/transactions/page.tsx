@@ -203,7 +203,7 @@ export default function TransactionsPage() {
         <div className="text-sm text-white/60">Saldo (lista): {fmtBRL(total)}</div>
       </div>
 
-      <form onSubmit={addTx} className="grid gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-7">
+      <form onSubmit={addTx} className="grid gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-8">
         <select
           className="rounded border border-white/15 bg-black/20 p-3"
           value={kind}
@@ -253,15 +253,15 @@ export default function TransactionsPage() {
           onChange={(e) => setDescription(e.target.value)}
         />
 
-        <div className="flex gap-2">
-          <input
-            className="w-full rounded border border-white/15 bg-black/20 p-3"
-            placeholder="Valor (ex: 19,90)"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-          <button className="rounded bg-white px-4 text-black">Adicionar</button>
-        </div>
+        <div className="flex gap-2 md:col-span-2">
+  <input
+    className="w-full min-w-[180px] rounded border border-white/15 bg-black/20 p-3"
+    placeholder="Valor (ex: 19,90)"
+    value={amount}
+    onChange={(e) => setAmount(e.target.value)}
+  />
+  <button className="rounded bg-white px-4 text-black">Adicionar</button>
+</div>
       </form>
 
       {error && (
