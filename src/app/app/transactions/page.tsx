@@ -123,8 +123,7 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
     await loadAll();
   }
-  return
-  (
+  return(
     <section className="space-y-6">
       <div className="flex items-end justify-between gap-3">
         <div>
