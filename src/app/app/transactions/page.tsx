@@ -14,6 +14,8 @@ type Tx = {
   kind: 'income' | 'expense';
   account_id: string | null;
   category_id: string | null;
+  receipt_path: string | null;
+
   account?: Account | null;
   category?: Category | null;
 };
@@ -34,11 +36,20 @@ function isoToYYYYMMDD(iso: string) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function getExt(file: File) {
+  const byName = file.name.split('.').pop()?.toLowerCase();
+  if (byName && byName.length <= 5) return byName;
+  if (file.type === 'image/png') return 'png';
+  if (file.type === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
 export default function TransactionsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // add form
@@ -79,12 +90,10 @@ export default function TransactionsPage() {
       supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
       supabase
         .from('transactions')
-        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id')
+        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,receipt_path')
         .order('occurred_at', { ascending: false })
         .limit(200),
-    ]);
-
-    if (a.error) setError(a.error.message);
+    ]);if (a.error) setError(a.error.message);
     if (c.error) setError(c.error.message);
     if (t.error) setError(t.error.message);
 
@@ -193,6 +202,70 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
     if (editingId === id) setEditingId(null);
     await loadAll();
+  }
+
+  function receiptPublicUrl(path: string) {
+    const supabase = supabaseBrowser();
+    const { data } = supabase.storage.from('receipts').getPublicUrl(path);
+    return data.publicUrl;
+  }
+
+  async function uploadReceipt(txId: string, file: File) {
+    setError(null);
+    setBusyId(txId);
+
+    try {
+      const supabase = supabaseBrowser();
+      const ext = getExt(file);
+
+      // 1 comprovante por transação (sobrescreve)
+      const path = `${txId}.${ext}`;
+
+      const { error: upErr } = await supabase.storage
+        .from('receipts').upload(path, file, { upsert: true, contentType: file.type });
+
+      if (upErr) throw new Error(upErr.message);
+
+      const { error: dbErr } = await supabase.from('transactions').update({ receipt_path: path }).eq('id', txId);
+      if (dbErr) throw new Error(dbErr.message);
+
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function parseReceipt(tx: Tx) {
+    if (!tx.receipt_path) return setError('Sem comprovante anexado');
+
+    setError(null);
+    setBusyId(tx.id);
+
+    try {
+      const imageUrl = receiptPublicUrl(tx.receipt_path);
+
+      const res = await fetch('/api/receipt/parse', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ imageUrl }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Falha ao ler comprovante');
+
+      // entra em edição se ainda não estiver
+      if (editingId !== tx.id) startEdit(tx);
+
+      if (json?.dateStr) setEditDateStr(String(json.dateStr));
+      if (json?.amount) setEditAmount(String(json.amount));
+      if (json?.merchant) setEditDescription(String(json.merchant));
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setBusyId(null);
+    }
   }return(
     <section className="space-y-6">
       <div className="flex items-end justify-between gap-3">
@@ -240,11 +313,12 @@ export default function TransactionsPage() {
         </select>
 
         <input
-  type="date"
-  className="date-gold min-w-[160px] rounded border border-white/15 bg-black/20 p-3 pr-10 text-white font-medium tracking-wide"
-  value={dateStr}
-  onChange={(e) => setDateStr(e.target.value)}
-/>
+          type="date"
+          className="min-w-[160px] rounded border border-white/15 bg-black/20 p-3 pr-10 text-white font-medium tracking-wide"
+          value={dateStr}
+          onChange={(e) => setDateStr(e.target.value)}
+        />
+
         <input
           className="rounded border border-white/15 bg-black/20 p-3 md:col-span-2"
           placeholder="Descrição"
@@ -312,28 +386,32 @@ export default function TransactionsPage() {
                     >
                       Editar
                     </button>
-                    <button
-                      onClick={() => removeTx(r.id)}
-                      className="text-white/50 hover:text-white/90"
-                      title="Remover"
-                    >
+                    <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">
                       ×
                     </button>
                   </div>
                 </div>
               );
-            }return(
+            }
+
+            const busy = busyId === r.id;
+            const receiptUrl = r.receipt_path ? receiptPublicUrl(r.receipt_path) : null;
+            return(
               <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
                 <div className="col-span-2">
                   <input
-  type="date"
-  className="date-gold w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide"
-  value={editDateStr}
-  onChange={(e) => setEditDateStr(e.target.value)}
-/>
+                    type="date"
+                    className="w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide"
+                    value={editDateStr}
+                    onChange={(e) => setEditDateStr(e.target.value)}
+                  />
                 </div>
 
                 <div className="col-span-4 space-y-2">
+                  <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-1 text-[11px] text-[#D4AF37]">
+                    COMPROVANTE: Anexar → Ler (OCR) → Salvar
+                  </div>
+
                   <input
                     className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
                     value={editDescription}
@@ -362,6 +440,45 @@ export default function TransactionsPage() {
                       onChange={(e) => setEditAmount(e.target.value)}
                       placeholder="Valor (ex: 19,90)"
                     />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <label className="cursor-pointer rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
+                      {busy ? 'Enviando…' : 'Anexar'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        disabled={busy}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void uploadReceipt(r.id, f);
+                          e.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => void parseReceipt(r)}
+                      className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                      disabled={busy || !r.receipt_path}
+                      title={!r.receipt_path ? 'Anexe um comprovante primeiro' : 'Ler comprovante e preencher campos'}
+                    >
+                      {busy ? 'Lendo…' : 'Ler'}
+                    </button>
+
+                    {receiptUrl && (
+                      <a
+                        href={receiptUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                      >
+                        Ver
+                      </a>
+                    )}
                   </div>
                 </div>
 
@@ -397,9 +514,10 @@ export default function TransactionsPage() {
 
                 <div className="col-span-3 flex items-center justify-end gap-2">
                   <button
-                    onClick={() => saveEdit(r.id)}
+                    onClick={() => void saveEdit(r.id)}
                     className="rounded bg-white px-3 py-2 text-xs font-medium text-black"
                     type="button"
+                    disabled={busy}
                   >
                     Salvar
                   </button>
@@ -407,12 +525,15 @@ export default function TransactionsPage() {
                     onClick={cancelEdit}
                     className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10"
                     type="button"
+                    disabled={busy}
                   >
                     Cancelar
                   </button>
                   <button
-                    onClick={() => removeTx(r.id)}
-                    className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"type="button"
+                    onClick={() => void removeTx(r.id)}
+                    className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"
+                    type="button"
+                    disabled={busy}
                   >
                     Remover
                   </button>
