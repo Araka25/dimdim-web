@@ -26,6 +26,14 @@ function todayYYYYMMDD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function isoToYYYYMMDD(iso: string) {
+  const d = new Date(iso);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function TransactionsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -33,6 +41,7 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // add form
   const [kind, setKind] = useState<'income' | 'expense'>('expense');
   const [accountId, setAccountId] = useState<string>('');
   const [categoryId, setCategoryId] = useState<string>('');
@@ -40,7 +49,20 @@ export default function TransactionsPage() {
   const [description, setDescription] = useState<string>('');
   const [amount, setAmount] = useState<string>('');
 
+  // edit inline
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editKind, setEditKind] = useState<'income' | 'expense'>('expense');
+  const [editAccountId, setEditAccountId] = useState<string>('');
+  const [editCategoryId, setEditCategoryId] = useState<string>('');
+  const [editDateStr, setEditDateStr] = useState<string>(() => todayYYYYMMDD());
+  const [editDescription, setEditDescription] = useState<string>('');
+  const [editAmount, setEditAmount] = useState<string>('');
+
   const filteredCategories = useMemo(() => categories.filter((c) => c.kind === kind), [categories, kind]);
+  const filteredEditCategories = useMemo(
+    () => categories.filter((c) => c.kind === editKind),
+    [categories, editKind]
+  );
 
   const total = useMemo(() => {
     return txs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
@@ -59,7 +81,7 @@ export default function TransactionsPage() {
         .from('transactions')
         .select('id,occurred_at,description,amount_cents,kind,account_id,category_id')
         .order('occurred_at', { ascending: false })
-        .limit(100),
+        .limit(200),
     ]);
 
     if (a.error) setError(a.error.message);
@@ -86,6 +108,21 @@ export default function TransactionsPage() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  function startEdit(tx: Tx) {
+    setError(null);
+    setEditingId(tx.id);
+    setEditKind(tx.kind);
+    setEditAccountId(tx.account_id ?? '');
+    setEditCategoryId(tx.category_id ?? '');
+    setEditDateStr(isoToYYYYMMDD(tx.occurred_at));
+    setEditDescription(tx.description ?? '');
+    setEditAmount(((tx.amount_cents || 0) / 100).toFixed(2).replace('.', ','));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+  }
 
   async function addTx(e: React.FormEvent) {
     e.preventDefault();
@@ -116,22 +153,53 @@ export default function TransactionsPage() {
     await loadAll();
   }
 
+  async function saveEdit(id: string) {
+    setError(null);
+
+    const cents = Math.round(Number(editAmount.replace(',', '.')) * 100);
+
+    if (!editDateStr) return setError('Data obrigatória');
+    if (!editDescription.trim()) return setError('Descrição obrigatória');
+    if (!Number.isFinite(cents) || cents <= 0) return setError('Valor inválido');
+
+    const occurredAt = new Date(`${editDateStr}T12:00:00.000Z`).toISOString();
+
+    // se trocou o tipo, mas manteve uma categoria incompatível, limpa a categoria
+    const cat = editCategoryId ? categories.find((x) => x.id === editCategoryId) : null;
+    const safeCategoryId = cat && cat.kind === editKind ? editCategoryId : '';
+
+    const supabase = supabaseBrowser();
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        description: editDescription.trim(),
+        amount_cents: cents,
+        kind: editKind,
+        occurred_at: occurredAt,
+        account_id: editAccountId || null,
+        category_id: safeCategoryId || null,
+      })
+      .eq('id', id);
+
+    if (error) return setError(error.message);
+
+    setEditingId(null);
+    await loadAll();
+  }
+
   async function removeTx(id: string) {
     if (!confirm('Remover esta transação?')) return;
     const supabase = supabaseBrowser();
     const { error } = await supabase.from('transactions').delete().eq('id', id);
     if (error) return setError(error.message);
+    if (editingId === id) setEditingId(null);
     await loadAll();
-  }
-  return(
+  }return(
     <section className="space-y-6">
       <div className="flex items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Transações</h1>
           <p className="text-sm text-white/60">Lançamentos de entrada/saída</p>
-          <div className="mt-1 text-xs text-white/40">
-            debug: loading={String(loading)} txs={txs.length} accounts={accounts.length} categories={categories.length}
-          </div>
         </div>
         <div className="text-sm text-white/60">Saldo (lista): {fmtBRL(total)}</div>
       </div>
@@ -215,29 +283,143 @@ export default function TransactionsPage() {
         ) : txs.length === 0 ? (
           <div className="p-4 text-sm text-white/60">Sem transações ainda.</div>
         ) : (
-          txs.map((r) => (
-            <div key={r.id} className="grid grid-cols-12 gap-2 border-b border-white/5 px-4 py-3">
-              <div className="col-span-2 text-sm text-white/70">{new Date(r.occurred_at).toLocaleDateString('pt-BR')}</div>
-              <div className="col-span-4 text-sm">{r.description}</div>
-              <div className="col-span-2 text-sm text-white/70">{r.account?.name ?? '-'}</div>
-              <div className="col-span-2 text-sm text-white/70">{r.category?.name ?? '-'}</div>
+          txs.map((r) => {
+            const editing = editingId === r.id;
 
-              <div
-  className={
-    'col-span-2 text-right text-sm font-medium ' +
-    (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')
-  }
->
-  <span className="mr-2">
-    {r.kind === 'income' ? '+' : '-'} {fmtBRL(r.amount_cents)}
-  </span>
-  <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90">
-    ×
-  </button>
-</div>
-</div>
-))
-        )}</div>
+            if (!editing) {
+              return (
+                <div key={r.id} className="grid grid-cols-12 gap-2 border-b border-white/5 px-4 py-3">
+                  <div className="col-span-2 text-sm text-white/70">
+                    {new Date(r.occurred_at).toLocaleDateString('pt-BR')}
+                  </div>
+                  <div className="col-span-4 text-sm">{r.description}</div>
+                  <div className="col-span-2 text-sm text-white/70">{r.account?.name ?? '-'}</div>
+                  <div className="col-span-2 text-sm text-white/70">{r.category?.name ?? '-'}</div>
+
+                  <div
+                    className={
+                      'col-span-2 flex items-center justify-end gap-2 text-right text-sm font-medium ' +
+                      (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')
+                    }
+                  >
+                    <span>
+                      {r.kind === 'income' ? '+' : '-'} {fmtBRL(r.amount_cents)}
+                    </span>
+                    <button
+                      onClick={() => startEdit(r)}
+                      className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                    >
+                      Editar
+                    </button>
+                    <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">
+                      ×
+                    </button>
+                  </div>
+                </div>
+              );
+            }return(
+              <div key={r.id} className="grid grid-cols-12 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
+                <div className="col-span-2">
+                  <input
+                    type="date"
+                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                    value={editDateStr}
+                    onChange={(e) => setEditDateStr(e.target.value)}
+                  />
+                </div>
+
+                <div className="col-span-4 space-y-2">
+                  <input
+                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder="Descrição"
+                  />
+
+                  <div className="flex gap-2">
+                    <select
+                      className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                      value={editKind}
+                      onChange={(e) => {
+                        const nextKind = e.target.value as any;
+                        setEditKind(nextKind);
+                        // se trocar kind, pode invalidar a categoria atual
+                        const cat = editCategoryId ? categories.find((x) => x.id === editCategoryId) : null;
+                        if (cat && cat.kind !== nextKind) setEditCategoryId('');
+                      }}
+                    >
+                      <option value="expense">Saída</option>
+                      <option value="income">Entrada</option>
+                    </select>
+
+                    <input
+                      className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                      value={editAmount}
+                      onChange={(e) => setEditAmount(e.target.value)}
+                      placeholder="Valor (ex: 19,90)"
+                    />
+                  </div>
+                </div>
+
+                <div className="col-span-2">
+                  <select
+                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                    value={editAccountId}
+                    onChange={(e) => setEditAccountId(e.target.value)}
+                  >
+                    <option value="">(Conta)</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="col-span-2">
+                  <select
+                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                    value={editCategoryId}
+                    onChange={(e) => setEditCategoryId(e.target.value)}
+                  >
+                    <option value="">(Categoria)</option>
+                    {filteredEditCategories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="col-span-2 flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => saveEdit(r.id)}
+                    className="rounded bg-white px-3 py-2 text-xs font-medium text-black"
+                    type="button"
+                  >
+                    Salvar
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10"
+                    type="button"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => removeTx(r.id)}
+                    className="rounded border border-red-500/40
+                    px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"
+                    type="button"
+                  >
+                    Remover
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </section>
   );
 }
