@@ -241,7 +241,7 @@ export default function TransactionsPage() {
 
         <input
           type="date"
-          className="rounded border border-white/15 bg-black/20 p-3"
+          className="date-yellow rounded border border-white/15 bg-black/20 p-3"
           value={dateStr}
           onChange={(e) => setDateStr(e.target.value)}
         />
@@ -254,14 +254,14 @@ export default function TransactionsPage() {
         />
 
         <div className="flex gap-2 md:col-span-2">
-  <input
-    className="w-full min-w-[180px] rounded border border-white/15 bg-black/20 p-3"
-    placeholder="Valor (ex: 19,90)"
-    value={amount}
-    onChange={(e) => setAmount(e.target.value)}
-  />
-  <button className="rounded bg-white px-4 text-black">Adicionar</button>
-</div>
+          <input
+            className="w-full min-w-[180px] rounded border border-white/15 bg-black/20 p-3"
+            placeholder="Valor (ex: 19,90)"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          <button className="rounded bg-white px-4 text-black">Adicionar</button>
+        </div>
       </form>
 
       {error && (
@@ -297,7 +297,8 @@ export default function TransactionsPage() {
                   <div className="col-span-2 text-sm text-white/70">{r.category?.name ?? '-'}</div>
 
                   <div
-                    className={'col-span-2 text-right text-sm font-medium ' +
+                    className={
+                      'col-span-2 text-right text-sm font-medium ' +
                       (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')
                     }
                   >
@@ -327,7 +328,7 @@ export default function TransactionsPage() {
                 <div className="col-span-2">
                   <input
                     type="date"
-                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                    className="date-yellow w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
                     value={editDateStr}
                     onChange={(e) => setEditDateStr(e.target.value)}
                   />
@@ -412,8 +413,7 @@ export default function TransactionsPage() {
                   </button>
                   <button
                     onClick={() => removeTx(r.id)}
-                    className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"
-                    type="button"
+                    className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"type="button"
                   >
                     Remover
                   </button>
