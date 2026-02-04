@@ -34,4 +34,9 @@ body {
 .date-yellow {
   color-scheme: dark;
 }
+.date-yellow::-webkit-calendar-picker-indicator {
+  filter: invert(83%) sepia(36%) saturate(2200%) hue-rotate(2deg) brightness(95%) contrast(95%);
+  opacity: 1;
+  cursor: pointer;
+}
 

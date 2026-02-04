@@ -241,7 +241,7 @@ export default function TransactionsPage() {
 
         <input
           type="date"
-          className="date-yellow rounded border border-white/15 bg-black/20 p-3"
+          className="date-yellow rounded border border-white/15 bg-black/20 p-3 text-white font-medium tracking-wide"
           value={dateStr}
           onChange={(e) => setDateStr(e.target.value)}
         />
@@ -328,7 +328,7 @@ export default function TransactionsPage() {
                 <div className="col-span-2">
                   <input
                     type="date"
-                    className="date-yellow w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                    className="date-yellow w-full rounded border border-white/15 bg-black/20 p-2 text-sm text-white font-medium tracking-wide"
                     value={editDateStr}
                     onChange={(e) => setEditDateStr(e.target.value)}
                   />
