@@ -164,7 +164,6 @@ export default function TransactionsPage() {
 
     const occurredAt = new Date(`${editDateStr}T12:00:00.000Z`).toISOString();
 
-    // se trocou o tipo, mas manteve uma categoria incompatível, limpa a categoria
     const cat = editCategoryId ? categories.find((x) => x.id === editCategoryId) : null;
     const safeCategoryId = cat && cat.kind === editKind ? editCategoryId : '';
 
@@ -270,12 +269,13 @@ export default function TransactionsPage() {
       )}
 
       <div className="overflow-hidden rounded border border-white/10">
-        <div className="grid grid-cols-12 gap-2 border-b border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60">
+        <div className="grid grid-cols-13 gap-2 border-b border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60">
           <div className="col-span-2">Data</div>
           <div className="col-span-4">Descrição</div>
           <div className="col-span-2">Conta</div>
           <div className="col-span-2">Categoria</div>
           <div className="col-span-2 text-right">Valor</div>
+          <div className="col-span-1 text-right">Ações</div>
         </div>
 
         {loading ? (
@@ -288,7 +288,7 @@ export default function TransactionsPage() {
 
             if (!editing) {
               return (
-                <div key={r.id} className="grid grid-cols-12 gap-2 border-b border-white/5 px-4 py-3">
+                <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 px-4 py-3">
                   <div className="col-span-2 text-sm text-white/70">
                     {new Date(r.occurred_at).toLocaleDateString('pt-BR')}
                   </div>
@@ -297,28 +297,33 @@ export default function TransactionsPage() {
                   <div className="col-span-2 text-sm text-white/70">{r.category?.name ?? '-'}</div>
 
                   <div
-                    className={
-                      'col-span-2 flex items-center justify-end gap-2 text-right text-sm font-medium ' +
+                    className={'col-span-2 text-right text-sm font-medium ' +
                       (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')
                     }
                   >
-                    <span>
-                      {r.kind === 'income' ? '+' : '-'} {fmtBRL(r.amount_cents)}
-                    </span>
+                    {r.kind === 'income' ? '+ ' : '- '}
+                    {fmtBRL(r.amount_cents)}
+                  </div>
+
+                  <div className="col-span-1 flex items-center justify-end gap-2">
                     <button
                       onClick={() => startEdit(r)}
                       className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
                     >
                       Editar
                     </button>
-                    <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">
+                    <button
+                      onClick={() => removeTx(r.id)}
+                      className="text-white/50 hover:text-white/90"
+                      title="Remover"
+                    >
                       ×
                     </button>
                   </div>
                 </div>
               );
             }return(
-              <div key={r.id} className="grid grid-cols-12 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
+              <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
                 <div className="col-span-2">
                   <input
                     type="date"
@@ -343,7 +348,6 @@ export default function TransactionsPage() {
                       onChange={(e) => {
                         const nextKind = e.target.value as any;
                         setEditKind(nextKind);
-                        // se trocar kind, pode invalidar a categoria atual
                         const cat = editCategoryId ? categories.find((x) => x.id === editCategoryId) : null;
                         if (cat && cat.kind !== nextKind) setEditCategoryId('');
                       }}
@@ -391,7 +395,7 @@ export default function TransactionsPage() {
                   </select>
                 </div>
 
-                <div className="col-span-2 flex items-center justify-end gap-2">
+                <div className="col-span-3 flex items-center justify-end gap-2">
                   <button
                     onClick={() => saveEdit(r.id)}
                     className="rounded bg-white px-3 py-2 text-xs font-medium text-black"
@@ -408,8 +412,7 @@ export default function TransactionsPage() {
                   </button>
                   <button
                     onClick={() => removeTx(r.id)}
-                    className="rounded border border-red-500/40
-                    px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"
+                    className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10"
                     type="button"
                   >
                     Remover
