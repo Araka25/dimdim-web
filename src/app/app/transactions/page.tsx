@@ -147,9 +147,11 @@ export default function TransactionsPage() {
 
     const supabase = supabaseBrowser();
 
-const { data: auth } = await supabase.auth.getUser();
-const userId = auth.user?.id;
-if (!userId) return setError('Você precisa estar logado.');
+const { data: authData, error: authErr } = await supabase.auth.getUser();
+if (authErr) return setError(authErr.message);
+
+const userId = authData.user?.id;
+if (!userId) return setError('Sessão expirada. Faça login novamente.');
 
 const { error } = await supabase.from('transactions').insert({
   user_id: userId,
