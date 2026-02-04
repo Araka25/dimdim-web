@@ -20,23 +20,23 @@
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}/* Chrome/Safari: pintar ícone do calendário via filter */
-.date-yellow::-webkit-calendar-picker-indicator {
-  filter: invert(83%) sepia(36%) saturate(2200%) hue-rotate(2deg) brightness(95%) contrast(95%);
-  opacity: 0.95;
+  /* Date input: manter tema escuro */
+.date-gold {
+  color-scheme: dark;
+}
+
+/* Chrome/Safari (WebKit): pintar o ícone do calendário em dourado (#D4AF37) */
+.date-gold::-webkit-calendar-picker-indicator {
+  /* aproxima o dourado #D4AF37 */
+  filter: invert(79%) sepia(31%) saturate(679%) hue-rotate(2deg) brightness(92%) contrast(92%);
+  opacity: 1;
   cursor: pointer;
 }
 
-/* manter aparência dark no input date */
-.date-yellow {
-  color-scheme: dark;
+/* melhora o clique no ícone */
+.date-gold::-webkit-calendar-picker-indicator:hover {
+  opacity: 0.95;
 }
-.date-yellow::-webkit-calendar-picker-indicator {
-  filter: invert(83%) sepia(36%) saturate(2200%) hue-rotate(2deg) brightness(95%) contrast(95%);
-  opacity: 1;
-  cursor: pointer;
+
 }
 

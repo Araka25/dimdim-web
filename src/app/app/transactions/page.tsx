@@ -240,12 +240,11 @@ export default function TransactionsPage() {
         </select>
 
         <input
-          type="date"
-          className="date-yellow rounded border border-white/15 bg-black/20 p-3 text-white font-medium tracking-wide"
-          value={dateStr}
-          onChange={(e) => setDateStr(e.target.value)}
-        />
-
+  type="date"
+  className="date-gold min-w-[160px] rounded border border-white/15 bg-black/20 p-3 pr-10 text-white font-medium tracking-wide"
+  value={dateStr}
+  onChange={(e) => setDateStr(e.target.value)}
+/>
         <input
           className="rounded border border-white/15 bg-black/20 p-3 md:col-span-2"
           placeholder="Descrição"
@@ -327,11 +326,11 @@ export default function TransactionsPage() {
               <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
                 <div className="col-span-2">
                   <input
-                    type="date"
-                    className="date-yellow w-full rounded border border-white/15 bg-black/20 p-2 text-sm text-white font-medium tracking-wide"
-                    value={editDateStr}
-                    onChange={(e) => setEditDateStr(e.target.value)}
-                  />
+  type="date"
+  className="date-gold w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide"
+  value={editDateStr}
+  onChange={(e) => setEditDateStr(e.target.value)}
+/>
                 </div>
 
                 <div className="col-span-4 space-y-2">
