@@ -146,15 +146,20 @@ export default function TransactionsPage() {
     const occurredAt = new Date(`${dateStr}T12:00:00.000Z`).toISOString();
 
     const supabase = supabaseBrowser();
-    const { error } = await supabase.from('transactions').insert({
-      description: description.trim(),
-      amount_cents: cents,
-      kind,
-      occurred_at: occurredAt,
-      account_id: accountId || null,
-      category_id: categoryId || null,
-    });
 
+const { data: auth } = await supabase.auth.getUser();
+const userId = auth.user?.id;
+if (!userId) return setError('Você precisa estar logado.');
+
+const { error } = await supabase.from('transactions').insert({
+  user_id: userId,
+  description: description.trim(),
+  amount_cents: cents,
+  kind,
+  occurred_at: occurredAt,
+  account_id: accountId || null,
+  category_id: categoryId || null,
+});
     if (error) return setError(error.message);
 
     setDescription('');
