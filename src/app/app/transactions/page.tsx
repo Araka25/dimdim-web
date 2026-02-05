@@ -98,9 +98,9 @@ export default function TransactionsPage() {
     return txs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
   }, [txs]);
 
-  async function getUserIdOrError() {
-    const supabase = supabaseBrowser();
-    const { data, error } = await supabase.auth.getUser();
+  // Pass the client instance to avoid stale session issues
+  async function getUserIdOrError(client: any) {
+    const { data, error } = await client.auth.getUser();
     if (error) throw new Error(error.message);
     const uid = data.user?.id;
     if (!uid) throw new Error('Sessão expirada. Faça login novamente.');
@@ -184,7 +184,7 @@ export default function TransactionsPage() {
     setBusyId('ADD');
     try {
       const supabase = supabaseBrowser();
-      const userId = await getUserIdOrError();
+      const userId = await getUserIdOrError(supabase);
       const ext = getExt(file);
       const tmpPath = `tmp/${userId}/${randomId()}.${ext}`;
 
@@ -234,7 +234,9 @@ export default function TransactionsPage() {
 
     try {
       const supabase = supabaseBrowser();
-      const userId = await getUserIdOrError();
+      // Pass the client to ensure we are using the session associated with this client
+      // especially if getUserIdOrError triggers a token refresh.
+      const userId = await getUserIdOrError(supabase);
 
       const { data, error } = await supabase
         .from('transactions')
