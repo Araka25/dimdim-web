@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, FormEvent } from 'react';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
 type Account = { id: string; name: string };
@@ -21,6 +21,13 @@ type Tx = {
   category?: Category | null;
 };
 
+type ParsedReceipt = {
+  merchant: string | null;
+  amount: string | null; // "123,45"
+  dateStr: string | null; // "YYYY-MM-DD"
+  rawText?: string;
+};
+
 function todayYYYYMMDD() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -35,6 +42,25 @@ function isoToYYYYMMDD(iso: string) {
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(d.getUTCDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function getExt(file: File) {
+  const byName = file.name.split('.').pop()?.toLowerCase();
+  if (byName && byName.length <= 5) return byName;
+  if (file.type === 'image/png') return 'png';
+  if (file.type === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+function randomId() {
+  // @ts-ignore
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function fmtBRL(cents: number) {
+  const value = cents / 100;
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 export default function TransactionsPage() {
@@ -53,7 +79,10 @@ export default function TransactionsPage() {
   const [description, setDescription] = useState<string>('');
   const [amount, setAmount] = useState<string>('');
 
-  // edit inline
+  // ADD receipt (temp)
+  const [addReceiptPath, setAddReceiptPath] = useState<string | null>(null);
+
+  // EDIT inline
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editKind, setEditKind] = useState<'income' | 'expense'>('expense');
   const [editAccountId, setEditAccountId] = useState<string>('');
@@ -68,6 +97,32 @@ export default function TransactionsPage() {
   const total = useMemo(() => {
     return txs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
   }, [txs]);
+
+  async function getUserIdOrError() {
+    const supabase = supabaseBrowser();
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw new Error(error.message);
+    const uid = data.user?.id;
+    if (!uid) throw new Error('Sessão expirada. Faça login novamente.');
+    return uid;
+  }
+
+  function receiptPublicUrl(path: string) {
+    const supabase = supabaseBrowser();
+    const { data } = supabase.storage.from('receipts').getPublicUrl(path);
+    return data.publicUrl;
+  }
+
+  async function ocrFromImageUrl(imageUrl: string): Promise<ParsedReceipt> {
+    const res = await fetch('/api/receipt/parse', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ imageUrl }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json?.error || 'Falha ao ler comprovante');
+    return json as ParsedReceipt;
+  }
 
   async function loadAll() {
     setLoading(true);
@@ -113,7 +168,8 @@ export default function TransactionsPage() {
     setError(null);
     setEditingId(tx.id);
     setEditKind(tx.kind);
-    setEditAccountId(tx.account_id ?? '');setEditCategoryId(tx.category_id ?? '');
+    setEditAccountId(tx.account_id ?? '');
+    setEditCategoryId(tx.category_id ?? '');
     setEditDateStr(isoToYYYYMMDD(tx.occurred_at));
     setEditDescription(tx.description ?? '');
     setEditAmount(((tx.amount_cents || 0) / 100).toFixed(2).replace('.', ','));
@@ -123,7 +179,49 @@ export default function TransactionsPage() {
     setEditingId(null);
   }
 
-  async function addTx(e: React.FormEvent) {
+  async function uploadTempReceiptForAdd(file: File) {
+    setError(null);
+    setBusyId('ADD');
+    try {
+      const supabase = supabaseBrowser();
+      const userId = await getUserIdOrError();
+      const ext = getExt(file);
+      const tmpPath = `tmp/${userId}/${randomId()}.${ext}`;
+
+      const { error: upErr } = await supabase.storage.from('receipts').upload(tmpPath, file, {
+        upsert: true,
+        contentType: file.type,
+      });
+      if (upErr) throw new Error(upErr.message);
+
+      setAddReceiptPath(tmpPath);
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function readReceiptForAdd() {
+    if (!addReceiptPath) return setError('Anexe um comprovante primeiro');
+    setError(null);
+    setBusyId('ADD');
+
+    try {
+      const imageUrl = receiptPublicUrl(addReceiptPath);
+      const parsed = await ocrFromImageUrl(imageUrl);
+
+      if (parsed.dateStr) setDateStr(String(parsed.dateStr));
+      if (parsed.amount) setAmount(String(parsed.amount));
+      if (parsed.merchant) setDescription(String(parsed.merchant));
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function addTx(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
@@ -134,17 +232,39 @@ export default function TransactionsPage() {
 
     const occurredAt = new Date(`${dateStr}T12:00:00.000Z`).toISOString();
 
-    const supabase = supabaseBrowser();
-    const { error } = await supabase.from('transactions').insert({
-      description: description.trim(),
-      amount_cents: cents,
-      kind,
-      occurred_at: occurredAt,
-      account_id: accountId || null,
-      category_id: categoryId || null,
-    });
+    try {
+      const supabase = supabaseBrowser();
+      const userId = await getUserIdOrError();
 
-    if (error) return setError(error.message);
+      const { data, error } = await supabase
+        .from('transactions')
+        .insert({
+          user_id: userId,
+          description: description.trim(),
+          amount_cents: cents,
+          kind,
+          occurred_at: occurredAt,
+          account_id: accountId || null,
+          category_id: categoryId || null,
+        })
+        .select('id')
+        .single();
+
+      if (error) throw new Error(error.message);
+      const txId = data?.id as string;
+
+      if (addReceiptPath) {
+        const ext = addReceiptPath.split('.').pop() || 'jpg';
+        const finalPath = `${txId}.${ext}`;
+
+        const { error: mvErr } = await supabase.storage.from('receipts').move(addReceiptPath, finalPath);
+        if (mvErr) throw new Error(mvErr.message);
+
+        const { error: upErr } = await supabase.from('transactions').update({ receipt_path: finalPath }).eq('id', txId);
+        if (upErr) throw new Error(upErr.message);
+
+        setAddReceiptPath(null);
+      }
 
       setDescription('');
       setAmount('');
@@ -158,7 +278,6 @@ export default function TransactionsPage() {
     setError(null);
 
     const cents = Math.round(Number(editAmount.replace(',', '.')) * 100);
-
     if (!editDateStr) return setError('Data obrigatória');
     if (!editDescription.trim()) return setError('Descrição obrigatória');
     if (!Number.isFinite(cents) || cents <= 0) return setError('Valor inválido');
@@ -194,7 +313,55 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
     if (editingId === id) setEditingId(null);
     await loadAll();
-  }return(
+  }
+
+  async function uploadReceiptForEdit(txId: string, file: File) {
+    setError(null);
+    setBusyId(txId);
+
+    try {
+      const supabase = supabaseBrowser();
+      const ext = getExt(file);
+      const path = `${txId}.${ext}`;
+
+      const { error: upErr } = await supabase.storage.from('receipts').upload(path, file, {
+        upsert: true,
+        contentType: file.type,
+      });
+      if (upErr) throw new Error(upErr.message);
+
+      const { error: dbErr } = await supabase.from('transactions').update({ receipt_path: path }).eq('id', txId);
+      if (dbErr) throw new Error(dbErr.message);
+
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function parseReceiptForEdit(tx: Tx) {
+    if (!tx.receipt_path) return setError('Sem comprovante anexado');
+    setError(null);
+    setBusyId(tx.id);
+
+    try {
+      const imageUrl = receiptPublicUrl(tx.receipt_path);
+      const parsed = await ocrFromImageUrl(imageUrl);
+      if (editingId !== tx.id) startEdit(tx);
+
+      if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
+      if (parsed.amount) setEditAmount(String(parsed.amount));
+      if (parsed.merchant) setEditDescription(String(parsed.merchant));
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
     <section className="space-y-6">
       <div className="flex items-end justify-between gap-3">
         <div>
@@ -204,7 +371,6 @@ export default function TransactionsPage() {
         <div className="text-sm text-white/60">Saldo (lista): {fmtBRL(total)}</div>
       </div>
 
-      {/* ADD FORM */}
       <form onSubmit={addTx} className="grid gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-8">
         <select className="rounded border border-white/15 bg-black/20 p-3" value={kind} onChange={(e) => setKind(e.target.value as any)}>
           <option value="expense">Saída</option>
@@ -246,13 +412,54 @@ export default function TransactionsPage() {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
-          <button className="rounded bg-white px-4 text-black">Adicionar</button>
+          <button className="rounded bg-white px-4 text-black" disabled={busyId === 'ADD'}>Adicionar</button>
+        </div>
+
+        <div className="md:col-span-8 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-white/60">Comprovante (cadastro):</span>
+
+          <label className="cursor-pointer rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
+            {busyId === 'ADD' ? 'Enviando…' : 'Anexar'}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              disabled={busyId === 'ADD'}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void uploadTempReceiptForAdd(f);
+                e.currentTarget.value = '';
+              }}
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => void readReceiptForAdd()}
+            className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+            disabled={busyId === 'ADD' || !addReceiptPath}
+          >
+            {busyId === 'ADD' ? 'Lendo…' : 'Ler'}
+          </button>
+
+          {addReceiptPath && (
+            <a
+              href={receiptPublicUrl(addReceiptPath)}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+            >
+              Ver
+            </a>
+          )}
         </div>
       </form>
 
-      {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
+      {error && (
+        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>
+      )}
 
-      {/* TABLE */}
       <div className="overflow-hidden rounded border border-white/10">
         <div className="grid grid-cols-13 gap-2 border-b border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60">
           <div className="col-span-2">Data</div>
@@ -261,11 +468,12 @@ export default function TransactionsPage() {
           <div className="col-span-2">Categoria</div>
           <div className="col-span-2 text-right">Valor</div>
           <div className="col-span-1 text-right">Ações</div>
-        </div>{loading ? (
+        </div>
+        {loading ? (
           <div className="p-4 text-sm text-white/60">Carregando…</div>
         ) : txs.length === 0 ? (
           <div className="p-4 text-sm text-white/60">Sem transações ainda.</div>
-        ) :(
+        ) : (
           txs.map((r) => {
             const editing = editingId === r.id;
             const busy = busyId === r.id;
@@ -337,6 +545,44 @@ export default function TransactionsPage() {
                       placeholder="Valor (ex: 19,90)"
                     />
                   </div>
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <label className="cursor-pointer rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
+                      {busy ? 'Enviando…' : 'Anexar'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        disabled={busy}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void uploadReceiptForEdit(r.id, f);
+                          e.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => void parseReceiptForEdit(r)}
+                      className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                      disabled={busy || !r.receipt_path}
+                    >
+                      {busy ? 'Lendo…' : 'Ler'}
+                    </button>
+
+                    {receiptUrl && (
+                      <a
+                        href={receiptUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                      >
+                        Ver
+                      </a>
+                    )}
+                  </div>
                 </div>
 
                 <div className="col-span-2">
@@ -369,9 +615,4 @@ export default function TransactionsPage() {
       </div>
     </section>
   );
-}
-
-function fmtBRL(cents: number) {
-  const value = cents / 100;
-  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
