@@ -1,4 +1,3 @@
-cat > src/app/app/transactions/page.tsx <<'TSX'
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -547,7 +546,7 @@ export default function TransactionsPage() {
                   <div className="flex flex-wrap gap-2 pt-1">
                     <label className="cursor-pointer rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
                       {busy ? 'Enviando…' : 'Anexar'}
-                      <inputtype="file"
+                      <input type="file"
                         accept="image/*"
                         capture="environment"
                         className="hidden"
@@ -618,4 +617,4 @@ function fmtBRL(cents: number) {
   const value = cents / 100;
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
-TSX
+
