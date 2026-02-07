@@ -366,21 +366,27 @@ export default function TransactionsPage() {
     setBusyId(tx.id);
 
     try {
-      // 1) Se já tem cache, usa sem chamar OpenAI
-      if (tx.receipt_parsed) {
-        const parsed = tx.receipt_parsed;
+      // 1) Se já tem cache, usa
+if (tx.receipt_parsed) {
+  const parsed = tx.receipt_parsed;
 
-        if (editingId !== tx.id) startEdit(tx);
+  if (editingId !== tx.id) startEdit(tx);
 
-        if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
-        if (parsed.amount) setEditAmount(String(parsed.amount));
-        if (parsed.merchant) setEditDescription(String(parsed.merchant));
-        return;
-      }
+  if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
+  if (parsed.amount) setEditAmount(String(parsed.amount));
+  if (parsed.merchant) setEditDescription(String(parsed.merchant));
+  return;
+}
 
-      // 2) Se não tem cache, chama OCR
-      const imageUrl = receiptPublicUrl(tx.receipt_path);
-      const parsed = await ocrFromImageUrl(imageUrl);
+// 2) Se NÃO tem cache, chama OCR e preenche
+const imageUrl = receiptPublicUrl(tx.receipt_path);
+const parsed = await ocrFromImageUrl(imageUrl);
+
+if (editingId !== tx.id) startEdit(tx);
+
+if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
+if (parsed.amount) setEditAmount(String(parsed.amount));
+if (parsed.merchant) setEditDescription(String(parsed.merchant));
 
       // 3) Salva cache no banco
       const supabase = supabaseBrowser();
@@ -406,7 +412,6 @@ export default function TransactionsPage() {
       setBusyId(null);
     }
   }
-
   return (
     <section className="space-y-6">
       <div className="flex items-end justify-between gap-3">
