@@ -77,10 +77,63 @@ export async function POST(req: Request) {
     const text = resp.choices?.[0]?.message?.content;
     if (!text) throw new Error('Sem resposta do modelo');
 
-    const json = JSON.parse(text) as Result;
-    return NextResponse.json(json);
+    const raw = JSON.parse(text) as Result;
+
+const json: Result = {
+  merchant: normalizeMerchant(raw.merchant),
+  amount: normalizeAmount(raw.amount),
+  dateStr: normalizeDateStr(raw.dateStr),
+};
+
+return NextResponse.json(json);
   } catch (e: any) {
     console.error('receipt/parse error', e);
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
   }
+}function normalizeAmount(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const s = input.trim();
+
+  // pega o último número com 2 casas decimais (geralmente o total)
+  const matches = s.match(/(\d{1,3}(\.\d{3})*,\d{2})|(\d+[\.,]\d{2})/g);
+  if (!matches?.length) return null;
+
+  const raw = matches[matches.length - 1];
+  const n = Number(raw.replace(/\./g, '').replace(',', '.'));
+  if (!Number.isFinite(n) || n <= 0) return null;
+
+  return n.toFixed(2).replace('.', ',');
+}
+
+function normalizeDateStr(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const s = input.trim();
+
+  // já está em YYYY-MM-DD?
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const yyyy = Number(iso[1]), mm = Number(iso[2]), dd = Number(iso[3]);
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    return s;
+  }
+
+  // DD/MM/YYYY ou DD-MM-YYYY
+  const br = s.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
+  if (br) {
+    const dd = Number(br[1]), mm = Number(br[2]), yyyy = Number(br[3]);
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    const mmStr = String(mm).padStart(2, '0');
+    const ddStr = String(dd).padStart(2, '0');
+    return `${yyyy}-${mmStr}-${ddStr}`;
+  }
+
+  return null;
+}
+
+function normalizeMerchant(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const s = input.replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  // limita tamanho (evita devolver texto enorme)
+  return s.slice(0, 80);
 }
