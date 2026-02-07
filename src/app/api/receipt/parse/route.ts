@@ -14,17 +14,23 @@ function toDataUrl(mime: string, base64: string) {
   return `data:${mime};base64,${base64}`;
 }
 
+function withTimeout(ms: number) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  return { controller, clear: () => clearTimeout(id) };
+}
+
 export async function GET() {
   return NextResponse.json({ ok: true, note: 'use POST com { imageUrl }' }, { status: 405 });
 }
 
 export async function POST(req: Request) {
-  try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: 'OPENAI_API_KEY não configurada' }, { status: 500 });
-    }
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: 'OPENAI_API_KEY não configurada' }, { status: 500 });
+  }
 
+  try {
     const body = await req.json().catch(() => ({} as any));
     const imageUrl = body?.imageUrl as string | undefined;
 
@@ -32,17 +38,50 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'imageUrl obrigatório' }, { status: 400 });
     }
 
-    const imgRes = await fetch(imageUrl);
+    // ---- Baixar imagem com timeout + validações ----
+    const MAX_BYTES = 4 * 1024 * 1024; // 4MB (ajuste se quiser)
+    const FETCH_TIMEOUT_MS = 10_000;
+
+    const t1 = withTimeout(FETCH_TIMEOUT_MS);
+    let imgRes: Response;
+    try {
+      imgRes = await fetch(imageUrl, { signal: t1.controller.signal });
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        return NextResponse.json({ error: 'Timeout ao baixar imagem' }, { status: 504 });
+      }
+      throw e;
+    } finally {
+      t1.clear();
+    }
+
     if (!imgRes.ok) {
       return NextResponse.json({ error: 'Falha ao baixar imagem' }, { status: 400 });
     }
 
-    const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+    const mimeType = imgRes.headers.get('content-type') || '';
+    if (!mimeType.startsWith('image/')) {
+      return NextResponse.json({ error: 'URL não parece ser uma imagem' }, { status: 400 });
+    }
+
+    const contentLength = imgRes.headers.get('content-length');
+    if (contentLength && Number(contentLength) > MAX_BYTES) {
+      return NextResponse.json({ error: `Imagem grande demais (> ${MAX_BYTES} bytes)` }, { status: 413 });
+    }
+
     const arrayBuffer = await imgRes.arrayBuffer();
+    if (arrayBuffer.byteLength > MAX_BYTES) {
+      return NextResponse.json({ error: `Imagem grande demais (> ${MAX_BYTES} bytes)` }, { status: 413 });
+    }
+
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     const dataUrl = toDataUrl(mimeType, base64);
 
-    const client = new OpenAI({ apiKey });
+    // ---- OpenAI com timeout ----
+    const client = new OpenAI({
+      apiKey,
+      timeout: 25_000, // 25s
+    });
 
     const schema = {
       type: 'object',
@@ -53,9 +92,7 @@ export async function POST(req: Request) {
         dateStr: { type: ['string', 'null'], description: 'Formato YYYY-MM-DD' },
       },
       required: ['merchant', 'amount', 'dateStr'],
-    } as const;
-
-    const resp = await client.chat.completions.create({
+    } as const;const resp = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0,
       response_format: {
@@ -77,63 +114,12 @@ export async function POST(req: Request) {
     const text = resp.choices?.[0]?.message?.content;
     if (!text) throw new Error('Sem resposta do modelo');
 
-    const raw = JSON.parse(text) as Result;
-
-const json: Result = {
-  merchant: normalizeMerchant(raw.merchant),
-  amount: normalizeAmount(raw.amount),
-  dateStr: normalizeDateStr(raw.dateStr),
-};
-
-return NextResponse.json(json);
+    const json = JSON.parse(text) as Result;
+    return NextResponse.json(json);
   } catch (e: any) {
+    // Erros comuns do OpenAI SDK já vêm com message útil
+    const msg = e?.message ? String(e.message) : String(e);
     console.error('receipt/parse error', e);
-    return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-}function normalizeAmount(input: unknown): string | null {
-  if (typeof input !== 'string') return null;
-  const s = input.trim();
-
-  // pega o último número com 2 casas decimais (geralmente o total)
-  const matches = s.match(/(\d{1,3}(\.\d{3})*,\d{2})|(\d+[\.,]\d{2})/g);
-  if (!matches?.length) return null;
-
-  const raw = matches[matches.length - 1];
-  const n = Number(raw.replace(/\./g, '').replace(',', '.'));
-  if (!Number.isFinite(n) || n <= 0) return null;
-
-  return n.toFixed(2).replace('.', ',');
-}
-
-function normalizeDateStr(input: unknown): string | null {
-  if (typeof input !== 'string') return null;
-  const s = input.trim();
-
-  // já está em YYYY-MM-DD?
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) {
-    const yyyy = Number(iso[1]), mm = Number(iso[2]), dd = Number(iso[3]);
-    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-    return s;
-  }
-
-  // DD/MM/YYYY ou DD-MM-YYYY
-  const br = s.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
-  if (br) {
-    const dd = Number(br[1]), mm = Number(br[2]), yyyy = Number(br[3]);
-    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-    const mmStr = String(mm).padStart(2, '0');
-    const ddStr = String(dd).padStart(2, '0');
-    return `${yyyy}-${mmStr}-${ddStr}`;
-  }
-
-  return null;
-}
-
-function normalizeMerchant(input: unknown): string | null {
-  if (typeof input !== 'string') return null;
-  const s = input.replace(/\s+/g, ' ').trim();
-  if (!s) return null;
-  // limita tamanho (evita devolver texto enorme)
-  return s.slice(0, 80);
 }
