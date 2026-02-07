@@ -119,17 +119,33 @@ export default function TransactionsPage() {
   }
 
   async function ocrFromImageUrl(imageUrl: string): Promise<ParsedReceipt> {
-    const res = await fetch('/api/receipt/parse', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ imageUrl }),
-    });
+  const res = await fetch('/api/receipt/parse', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ imageUrl }),
+  });
 
-    const json = await res.json();
-    if (!res.ok) throw new Error(json?.error || 'Falha ao ler comprovante');
-    return json as ParsedReceipt;
+  let json: any = null;
+  try {
+    json = await res.json();
+  } catch {
+    // se não vier JSON, cai no tratamento abaixo
   }
 
+  if (!res.ok) {
+    const msgFromApi = json?.error ? String(json.error) : null;
+
+    if (res.status === 413) throw new Error(msgFromApi || 'Imagem grande demais. Envie uma foto menor.');
+    if (res.status === 504) throw new Error(msgFromApi || 'Timeout ao ler o comprovante. Tente novamente.');
+    if (res.status === 429) throw new Error(msgFromApi || 'Muitas leituras em pouco tempo. Tente em alguns minutos.');
+    if (res.status === 400) throw new Error(msgFromApi || 'Comprovante inválido.');
+    if (res.status === 500) throw new Error(msgFromApi || 'Erro ao processar OCR. Tente novamente.');
+
+    throw new Error(msgFromApi || `Falha ao ler comprovante (HTTP ${res.status})`);
+  }
+
+  return json as ParsedReceipt;
+}
   async function loadAll() {
     setLoading(true);
     setError(null);
