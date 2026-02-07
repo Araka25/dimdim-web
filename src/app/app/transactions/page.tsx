@@ -25,10 +25,6 @@ type Tx = {
 
   receipt_path: string | null;
 
-  // CACHE do OCR (precisa existir no banco)
-  receipt_parsed: ParsedReceipt | null;
-  receipt_parsed_at: string | null;
-
   account?: Account | null;
   category?: Category | null;
 };
@@ -103,7 +99,6 @@ export default function TransactionsPage() {
     return txs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
   }, [txs]);
 
-  // Pass the client instance to avoid stale session issues
   async function getUserIdOrError(client: any) {
     const { data, error } = await client.auth.getUser();
     if (error) throw new Error(error.message);
@@ -112,40 +107,44 @@ export default function TransactionsPage() {
     return uid;
   }
 
-  function receiptPublicUrl(path: string) {
-    const supabase = supabaseBrowser();
-    const { data } = supabase.storage.from('receipts').getPublicUrl(path);
-    return data.publicUrl;
+  async function receiptSignedUrl(path: string) {
+    const res = await fetch('/api/receipt/signed-url', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json?.error || 'Falha ao gerar signed URL');
+    return String(json.signedUrl);
   }
 
-  async function ocrFromImageUrl(imageUrl: string): Promise<ParsedReceipt> {
-  const res = await fetch('/api/receipt/parse', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ imageUrl }),
-  });
+  async function ocrFromPath(path: string): Promise<ParsedReceipt> {
+    const res = await fetch('/api/receipt/parse', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
 
-  let json: any = null;
-  try {
-    json = await res.json();
-  } catch {
-    // se não vier JSON, cai no tratamento abaixo
+    let json: any = null;
+    try {
+      json = await res.json();
+    } catch {}
+
+    if (!res.ok) {
+      const msgFromApi = json?.error ? String(json.error) : null;
+
+      if (res.status === 413) throw new Error(msgFromApi || 'Imagem grande demais. Envie uma foto menor.');
+      if (res.status === 504) throw new Error(msgFromApi || 'Timeout ao ler o comprovante. Tente novamente.');
+      if (res.status === 429) throw new Error(msgFromApi || 'Muitas leituras. Tente em alguns minutos.');
+      if (res.status === 400) throw new Error(msgFromApi || 'Comprovante inválido.');
+      if (res.status === 500) throw new Error(msgFromApi || 'Erro ao processar OCR. Tente novamente.');
+
+      throw new Error(msgFromApi || `Falha ao ler comprovante (HTTP ${res.status})`);
+    }
+
+    return json as ParsedReceipt;
   }
 
-  if (!res.ok) {
-    const msgFromApi = json?.error ? String(json.error) : null;
-
-    if (res.status === 413) throw new Error(msgFromApi || 'Imagem grande demais. Envie uma foto menor.');
-    if (res.status === 504) throw new Error(msgFromApi || 'Timeout ao ler o comprovante. Tente novamente.');
-    if (res.status === 429) throw new Error(msgFromApi || 'Muitas leituras em pouco tempo. Tente em alguns minutos.');
-    if (res.status === 400) throw new Error(msgFromApi || 'Comprovante inválido.');
-    if (res.status === 500) throw new Error(msgFromApi || 'Erro ao processar OCR. Tente novamente.');
-
-    throw new Error(msgFromApi || `Falha ao ler comprovante (HTTP ${res.status})`);
-  }
-
-  return json as ParsedReceipt;
-}
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -156,7 +155,7 @@ export default function TransactionsPage() {
       supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
       supabase
         .from('transactions')
-        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path,receipt_parsed,receipt_parsed_at')
+        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path')
         .order('occurred_at', { ascending: false })
         .limit(200),
     ]);
@@ -233,8 +232,7 @@ export default function TransactionsPage() {
     setBusyId('ADD');
 
     try {
-      const imageUrl = receiptPublicUrl(addReceiptPath);
-      const parsed = await ocrFromImageUrl(imageUrl);
+      const parsed = await ocrFromPath(addReceiptPath);
 
       if (parsed.dateStr) setDateStr(String(parsed.dateStr));
       if (parsed.amount) setAmount(String(parsed.amount));
@@ -360,13 +358,6 @@ export default function TransactionsPage() {
       const { error: dbErr } = await supabase.from('transactions').update({ receipt_path: path }).eq('id', txId);
       if (dbErr) throw new Error(dbErr.message);
 
-      // quando anexa um novo comprovante, invalida cache
-      const { error: cacheErr } = await supabase
-        .from('transactions')
-        .update({ receipt_parsed: null, receipt_parsed_at: null })
-        .eq('id', txId);
-      if (cacheErr) throw new Error(cacheErr.message);
-
       await loadAll();
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
@@ -382,41 +373,8 @@ export default function TransactionsPage() {
     setBusyId(tx.id);
 
     try {
-      // 1) Se já tem cache, usa
-if (tx.receipt_parsed) {
-  const parsed = tx.receipt_parsed;
+      const parsed = await ocrFromPath(tx.receipt_path);
 
-  if (editingId !== tx.id) startEdit(tx);
-
-  if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
-  if (parsed.amount) setEditAmount(String(parsed.amount));
-  if (parsed.merchant) setEditDescription(String(parsed.merchant));
-  return;
-}
-
-// 2) Se NÃO tem cache, chama OCR e preenche
-const imageUrl = receiptPublicUrl(tx.receipt_path);
-const parsed = await ocrFromImageUrl(imageUrl);
-
-if (editingId !== tx.id) startEdit(tx);
-
-if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
-if (parsed.amount) setEditAmount(String(parsed.amount));
-if (parsed.merchant) setEditDescription(String(parsed.merchant));
-
-      // 3) Salva cache no banco
-      const supabase = supabaseBrowser();
-      const { error: cacheErr } = await supabase
-        .from('transactions')
-        .update({
-          receipt_parsed: parsed,
-          receipt_parsed_at: new Date().toISOString(),
-        })
-        .eq('id', tx.id);
-
-      if (cacheErr) throw new Error(cacheErr.message);
-
-      // 4) Aplica no form
       if (editingId !== tx.id) startEdit(tx);
 
       if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
@@ -428,6 +386,7 @@ if (parsed.merchant) setEditDescription(String(parsed.merchant));
       setBusyId(null);
     }
   }
+
   return (
     <section className="space-y-6">
       <div className="flex items-end justify-between gap-3">
@@ -517,14 +476,21 @@ if (parsed.merchant) setEditDescription(String(parsed.merchant));
           </button>
 
           {addReceiptPath && (
-            <a
-              href={receiptPublicUrl(addReceiptPath)}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const url = await receiptSignedUrl(addReceiptPath);
+                  window.open(url, '_blank', 'noreferrer');
+                } catch (e: any) {
+                  setError(e?.message ? String(e.message) : String(e));
+                }
+              }}
               className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+              disabled={busyId === 'ADD'}
             >
               Ver
-            </a>
+            </button>
           )}
         </div>
       </form>
@@ -549,7 +515,6 @@ if (parsed.merchant) setEditDescription(String(parsed.merchant));
           txs.map((r) => {
             const editing = editingId === r.id;
             const busy = busyId === r.id;
-            const receiptUrl = r.receipt_path ? receiptPublicUrl(r.receipt_path) : null;
 
             if (!editing) {
               return (
@@ -648,15 +613,22 @@ if (parsed.merchant) setEditDescription(String(parsed.merchant));
                       {busy ? 'Lendo…' : 'Ler'}
                     </button>
 
-                    {receiptUrl && (
-                      <a
-                        href={receiptUrl}
-                        target="_blank"
-                        rel="noreferrer"
+                    {r.receipt_path && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const url = await receiptSignedUrl(r.receipt_path!);
+                            window.open(url, '_blank', 'noreferrer');
+                          } catch (e: any) {
+                            setError(e?.message ? String(e.message) : String(e));
+                          }
+                        }}
                         className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                        disabled={busy}
                       >
                         Ver
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>
