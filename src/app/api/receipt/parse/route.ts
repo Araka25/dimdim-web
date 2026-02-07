@@ -37,7 +37,15 @@ export async function POST(req: Request) {
     if (!imageUrl) {
       return NextResponse.json({ error: 'imageUrl obrigatório' }, { status: 400 });
     }
+    const allowedPrefix =
+  'https://eogmhdmrapptmmjvadhl.supabase.co/storage/v1/object/public/receipts/';
 
+if (!imageUrl.startsWith(allowedPrefix)) {
+  return NextResponse.json(
+    { error: 'imageUrl inválida (somente receipts públicos do Supabase são aceitos)' },
+    { status: 400 }
+  );
+}
     // ---- Baixar imagem com timeout + validações ----
     const MAX_BYTES = 4 * 1024 * 1024; // 4MB (ajuste se quiser)
     const FETCH_TIMEOUT_MS = 10_000;
