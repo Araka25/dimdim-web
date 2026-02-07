@@ -22,7 +22,6 @@ type Tx = {
   account_id: string | null;
   category_id: string | null;
   user_id: string;
-
   receipt_path: string | null;
 
   account?: Account | null;
@@ -131,15 +130,13 @@ export default function TransactionsPage() {
     } catch {}
 
     if (!res.ok) {
-      const msgFromApi = json?.error ? String(json.error) : null;
-
-      if (res.status === 413) throw new Error(msgFromApi || 'Imagem grande demais. Envie uma foto menor.');
-      if (res.status === 504) throw new Error(msgFromApi || 'Timeout ao ler o comprovante. Tente novamente.');
-      if (res.status === 429) throw new Error(msgFromApi || 'Muitas leituras. Tente em alguns minutos.');
-      if (res.status === 400) throw new Error(msgFromApi || 'Comprovante inválido.');
-      if (res.status === 500) throw new Error(msgFromApi || 'Erro ao processar OCR. Tente novamente.');
-
-      throw new Error(msgFromApi || `Falha ao ler comprovante (HTTP ${res.status})`);
+      const msg = json?.error ? String(json.error) : null;
+      if (res.status === 413) throw new Error(msg || 'Imagem grande demais. Envie uma foto menor.');
+      if (res.status === 504) throw new Error(msg || 'Timeout ao ler o comprovante. Tente novamente.');
+      if (res.status === 429) throw new Error(msg || 'Muitas leituras. Tente em alguns minutos.');
+      if (res.status === 400) throw new Error(msg || 'Comprovante inválido.');
+      if (res.status === 500) throw new Error(msg || 'Erro ao processar OCR. Tente novamente.');
+      throw new Error(msg || `Falha ao ler comprovante (HTTP ${res.status})`);
     }
 
     return json as ParsedReceipt;
@@ -397,7 +394,7 @@ export default function TransactionsPage() {
         <div className="text-sm text-white/60">Saldo (lista): {fmtBRL(total)}</div>
       </div>
 
-      <form onSubmit={addTx} className="grid gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-8">
+      <form onSubmit={addTx} className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-8">
         <select className="rounded border border-white/15 bg-black/20 p-3" value={kind} onChange={(e) => setKind(e.target.value as any)}>
           <option value="expense">Saída</option>
           <option value="income">Entrada</option>
@@ -497,182 +494,184 @@ export default function TransactionsPage() {
 
       {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
+      {/* TABELA (com scroll horizontal no mobile) */}
       <div className="rounded border border-white/10">
-  <div className="overflow-x-auto">
-    <div className="min-w-[900px] overflow-hidden">
-      {/* ... SEU HEADER E SUAS LINHAS AQUI DENTRO ... */}
-    </div>
-          <div className="col-span-2">Data</div>
-          <div className="col-span-4">Descrição</div>
-          <div className="col-span-2">Conta</div>
-          <div className="col-span-2">Categoria</div>
-          <div className="col-span-2 text-right">Valor</div>
-          <div className="col-span-1 text-right">Ações</div>
-        </div>
+        <div className="overflow-x-auto">
+          <div className="min-w-[900px] overflow-hidden">
+            <div className="grid grid-cols-13 gap-2 border-b border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60">
+              <div className="col-span-2">Data</div>
+              <div className="col-span-4">Descrição</div>
+              <div className="col-span-2">Conta</div>
+              <div className="col-span-2">Categoria</div>
+              <div className="col-span-2 text-right">Valor</div>
+              <div className="col-span-1 text-right">Ações</div>
+            </div>
 
-        {loading ? (
-          <div className="p-4 text-sm text-white/60">Carregando…</div>
-        ) : txs.length === 0 ? (
-          <div className="p-4 text-sm text-white/60">Sem transações ainda.</div>
-        ) : (
-          txs.map((r) => {
-            const editing = editingId === r.id;
-            const busy = busyId === r.id;
+            {loading ? (
+              <div className="p-4 text-sm text-white/60">Carregando…</div>
+            ) : txs.length === 0 ? (
+              <div className="p-4 text-sm text-white/60">Sem transações ainda.</div>
+            ) : (
+              txs.map((r) => {
+                const editing = editingId === r.id;
+                const busy = busyId === r.id;
 
-            if (!editing) {
-              return (
-                <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 px-4 py-3">
-                  <div className="col-span-2 text-sm text-white/70">{new Date(r.occurred_at).toLocaleDateString('pt-BR')}</div>
-                  <div className="col-span-4 text-sm">{r.description}</div>
-                  <div className="col-span-2 text-sm text-white/70">{r.account?.name ?? '-'}</div>
-                  <div className="col-span-2 text-sm text-white/70">{r.category?.name ?? '-'}</div>
+                if (!editing) {
+                  return (
+                    <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 px-4 py-3">
+                      <div className="col-span-2 text-sm text-white/70">{new Date(r.occurred_at).toLocaleDateString('pt-BR')}</div>
+                      <div className="col-span-4 text-sm">{r.description}</div>
+                      <div className="col-span-2 text-sm text-white/70">{r.account?.name ?? '-'}</div>
+                      <div className="col-span-2 text-sm text-white/70">{r.category?.name ?? '-'}</div>
 
-                  <div className={'col-span-2 text-right text-sm font-medium ' + (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')}>
-                    {r.kind === 'income' ? '+ ' : '- '}
-                    {fmtBRL(r.amount_cents)}
-                  </div>
+                      <div className={'col-span-2 text-right text-sm font-medium ' + (r.kind === 'income' ? 'text-emerald-300' : 'text-red-300')}>
+                        {r.kind === 'income' ? '+ ' : '- '}
+                        {fmtBRL(r.amount_cents)}
+                      </div>
 
-                  <div className="col-span-1 flex items-center justify-end gap-2">
-                    <button onClick={() => startEdit(r)} className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
-                      Editar
-                    </button>
-                    <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">
-                      ×
-                    </button>
-                  </div>
-                </div>
-              );
-            }
+                      <div className="col-span-1 flex items-center justify-end gap-2">
+                        <button onClick={() => startEdit(r)} className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
+                          Editar
+                        </button>
+                        <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
 
-            return (
-              <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
-                <div className="col-span-2">
-                  <input
-                    type="date"
-                    className="w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide"
-                    value={editDateStr}
-                    onChange={(e) => setEditDateStr(e.target.value)}
-                  />
-                </div>
-
-                <div className="col-span-4 space-y-2">
-                  <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-1 text-[11px] text-[#D4AF37]">
-                    COMPROVANTE (edição): Anexar → Ler (OCR) → Salvar
-                  </div>
-
-                  <input
-                    className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Descrição"
-                  />
-
-                  <div className="flex gap-2">
-                    <select
-                      className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
-                      value={editKind}
-                      onChange={(e) => {
-                        const nextKind = e.target.value as any;
-                        setEditKind(nextKind);
-                        const cat = editCategoryId ? categories.find((x) => x.id === editCategoryId) : null;
-                        if (cat && cat.kind !== nextKind) setEditCategoryId('');
-                      }}
-                    >
-                      <option value="expense">Saída</option>
-                      <option value="income">Entrada</option>
-                    </select>
-
-                    <input
-                      className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
-                      value={editAmount}
-                      onChange={(e) => setEditAmount(e.target.value)}
-                      placeholder="Valor (ex: 19,90)"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <label className="cursor-pointer rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
-                      {busy ? 'Enviando…' : 'Anexar'}
+                return (
+                  <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
+                    <div className="col-span-2">
                       <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        className="hidden"
-                        disabled={busy}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void uploadReceiptForEdit(r.id, f);
-                          e.currentTarget.value = '';
-                        }}
+                        type="date"
+                        className="w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide"
+                        value={editDateStr}
+                        onChange={(e) => setEditDateStr(e.target.value)}
                       />
-                    </label>
+                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void parseReceiptForEdit(r)}
-                      className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
-                      disabled={busy || !r.receipt_path}
-                    >
-                      {busy ? 'Lendo…' : 'Ler'}
-                    </button>
+                    <div className="col-span-4 space-y-2">
+                      <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-1 text-[11px] text-[#D4AF37]">
+                        COMPROVANTE (edição): Anexar → Ler (OCR) → Salvar
+                      </div>
 
-                    {r.receipt_path && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            const url = await receiptSignedUrl(r.receipt_path!);
-                            window.open(url, '_blank', 'noreferrer');
-                          } catch (e: any) {
-                            setError(e?.message ? String(e.message) : String(e));
-                          }
-                        }}
-                        className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
-                        disabled={busy}
-                      >
-                        Ver
+                      <input
+                        className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        placeholder="Descrição"
+                      />
+
+                      <div className="flex gap-2">
+                        <select
+                          className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                          value={editKind}
+                          onChange={(e) => {
+                            const nextKind = e.target.value as any;
+                            setEditKind(nextKind);
+                            const cat = editCategoryId ? categories.find((x) => x.id === editCategoryId) : null;
+                            if (cat && cat.kind !== nextKind) setEditCategoryId('');
+                          }}
+                        >
+                          <option value="expense">Saída</option>
+                          <option value="income">Entrada</option>
+                        </select>
+
+                        <input
+                          className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                          value={editAmount}
+                          onChange={(e) => setEditAmount(e.target.value)}
+                          placeholder="Valor (ex: 19,90)"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <label className="cursor-pointer rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
+                          {busy ? 'Enviando…' : 'Anexar'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            className="hidden"
+                            disabled={busy}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) void uploadReceiptForEdit(r.id, f);
+                              e.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => void parseReceiptForEdit(r)}
+                          className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                          disabled={busy || !r.receipt_path}
+                        >
+                          {busy ? 'Lendo…' : 'Ler'}
+                        </button>
+
+                        {r.receipt_path && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const url = await receiptSignedUrl(r.receipt_path!);
+                                window.open(url, '_blank', 'noreferrer');
+                              } catch (e: any) {
+                                setError(e?.message ? String(e.message) : String(e));
+                              }
+                            }}
+                            className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                            disabled={busy}
+                          >
+                            Ver
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="col-span-2">
+                      <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
+                        <option value="">(Conta)</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="col-span-2">
+                      <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editCategoryId} onChange={(e) => setEditCategoryId(e.target.value)}>
+                        <option value="">(Categoria)</option>
+                        {filteredEditCategories.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="col-span-3 flex items-center justify-end gap-2">
+                      <button onClick={() => void saveEdit(r.id)} className="rounded bg-white px-3 py-2 text-xs font-medium text-black" type="button" disabled={busy}>
+                        Salvar
                       </button>
-                    )}
+                      <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
+                        Cancelar
+                      </button>
+                      <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
+                        Remover
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div className="col-span-2">
-                  <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
-                    <option value="">(Conta)</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="col-span-2">
-                  <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editCategoryId} onChange={(e) => setEditCategoryId(e.target.value)}>
-                    <option value="">(Categoria)</option>
-                    {filteredEditCategories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="col-span-3 flex items-center justify-end gap-2">
-                  <button onClick={() => void saveEdit(r.id)} className="rounded bg-white px-3 py-2 text-xs font-medium text-black" type="button" disabled={busy}>
-                    Salvar
-                  </button>
-                  <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
-                    Cancelar
-                  </button>
-                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
-                    Remover
-                  </button>
-                </div>
-              </div>
-            );
-          })
-        )}
+                );
+              })
+            )}
+          </div>
+        </div>
       </div>
     </section>
   );
