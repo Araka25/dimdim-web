@@ -6,6 +6,13 @@ import { supabaseBrowser } from '@/lib/supabaseBrowser';
 type Account = { id: string; name: string };
 type Category = { id: string; name: string; kind: 'income' | 'expense' };
 
+type ParsedReceipt = {
+  merchant: string | null;
+  amount: string | null; // "123,45"
+  dateStr: string | null; // "YYYY-MM-DD"
+  rawText?: string;
+};
+
 type Tx = {
   id: string;
   occurred_at: string;
@@ -15,17 +22,15 @@ type Tx = {
   account_id: string | null;
   category_id: string | null;
   user_id: string;
+
   receipt_path: string | null;
+
+  // CACHE do OCR (precisa existir no banco)
+  receipt_parsed: ParsedReceipt | null;
+  receipt_parsed_at: string | null;
 
   account?: Account | null;
   category?: Category | null;
-};
-
-type ParsedReceipt = {
-  merchant: string | null;
-  amount: string | null; // "123,45"
-  dateStr: string | null; // "YYYY-MM-DD"
-  rawText?: string;
 };
 
 function todayYYYYMMDD() {
@@ -119,6 +124,7 @@ export default function TransactionsPage() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ imageUrl }),
     });
+
     const json = await res.json();
     if (!res.ok) throw new Error(json?.error || 'Falha ao ler comprovante');
     return json as ParsedReceipt;
@@ -134,7 +140,7 @@ export default function TransactionsPage() {
       supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
       supabase
         .from('transactions')
-        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path')
+        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path,receipt_parsed,receipt_parsed_at')
         .order('occurred_at', { ascending: false })
         .limit(200),
     ]);
@@ -182,9 +188,11 @@ export default function TransactionsPage() {
   async function uploadTempReceiptForAdd(file: File) {
     setError(null);
     setBusyId('ADD');
+
     try {
       const supabase = supabaseBrowser();
       const userId = await getUserIdOrError(supabase);
+
       const ext = getExt(file);
       const tmpPath = `tmp/${userId}/${randomId()}.${ext}`;
 
@@ -204,6 +212,7 @@ export default function TransactionsPage() {
 
   async function readReceiptForAdd() {
     if (!addReceiptPath) return setError('Anexe um comprovante primeiro');
+
     setError(null);
     setBusyId('ADD');
 
@@ -234,8 +243,6 @@ export default function TransactionsPage() {
 
     try {
       const supabase = supabaseBrowser();
-      // Pass the client to ensure we are using the session associated with this client
-      // especially if getUserIdOrError triggers a token refresh.
       const userId = await getUserIdOrError(supabase);
 
       const { data, error } = await supabase
@@ -310,9 +317,11 @@ export default function TransactionsPage() {
 
   async function removeTx(id: string) {
     if (!confirm('Remover esta transação?')) return;
+
     const supabase = supabaseBrowser();
     const { error } = await supabase.from('transactions').delete().eq('id', id);
     if (error) return setError(error.message);
+
     if (editingId === id) setEditingId(null);
     await loadAll();
   }
@@ -335,6 +344,13 @@ export default function TransactionsPage() {
       const { error: dbErr } = await supabase.from('transactions').update({ receipt_path: path }).eq('id', txId);
       if (dbErr) throw new Error(dbErr.message);
 
+      // quando anexa um novo comprovante, invalida cache
+      const { error: cacheErr } = await supabase
+        .from('transactions')
+        .update({ receipt_parsed: null, receipt_parsed_at: null })
+        .eq('id', txId);
+      if (cacheErr) throw new Error(cacheErr.message);
+
       await loadAll();
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
@@ -345,12 +361,40 @@ export default function TransactionsPage() {
 
   async function parseReceiptForEdit(tx: Tx) {
     if (!tx.receipt_path) return setError('Sem comprovante anexado');
+
     setError(null);
     setBusyId(tx.id);
 
     try {
+      // 1) Se já tem cache, usa sem chamar OpenAI
+      if (tx.receipt_parsed) {
+        const parsed = tx.receipt_parsed;
+
+        if (editingId !== tx.id) startEdit(tx);
+
+        if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
+        if (parsed.amount) setEditAmount(String(parsed.amount));
+        if (parsed.merchant) setEditDescription(String(parsed.merchant));
+        return;
+      }
+
+      // 2) Se não tem cache, chama OCR
       const imageUrl = receiptPublicUrl(tx.receipt_path);
       const parsed = await ocrFromImageUrl(imageUrl);
+
+      // 3) Salva cache no banco
+      const supabase = supabaseBrowser();
+      const { error: cacheErr } = await supabase
+        .from('transactions')
+        .update({
+          receipt_parsed: parsed,
+          receipt_parsed_at: new Date().toISOString(),
+        })
+        .eq('id', tx.id);
+
+      if (cacheErr) throw new Error(cacheErr.message);
+
+      // 4) Aplica no form
       if (editingId !== tx.id) startEdit(tx);
 
       if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
@@ -382,14 +426,18 @@ export default function TransactionsPage() {
         <select className="rounded border border-white/15 bg-black/20 p-3" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
           <option value="">(Conta)</option>
           {accounts.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
           ))}
         </select>
 
         <select className="rounded border border-white/15 bg-black/20 p-3" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
           <option value="">(Categoria)</option>
           {filteredCategories.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
           ))}
         </select>
 
@@ -414,7 +462,9 @@ export default function TransactionsPage() {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
-          <button className="rounded bg-white px-4 text-black" disabled={busyId === 'ADD'}>Adicionar</button>
+          <button className="rounded bg-white px-4 text-black" disabled={busyId === 'ADD'}>
+            Adicionar
+          </button>
         </div>
 
         <div className="md:col-span-8 flex flex-wrap items-center gap-2">
@@ -458,9 +508,7 @@ export default function TransactionsPage() {
         </div>
       </form>
 
-      {error && (
-        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>
-      )}
+      {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
       <div className="overflow-hidden rounded border border-white/10">
         <div className="grid grid-cols-13 gap-2 border-b border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60">
@@ -471,6 +519,7 @@ export default function TransactionsPage() {
           <div className="col-span-2 text-right">Valor</div>
           <div className="col-span-1 text-right">Ações</div>
         </div>
+
         {loading ? (
           <div className="p-4 text-sm text-white/60">Carregando…</div>
         ) : txs.length === 0 ? (
@@ -495,8 +544,12 @@ export default function TransactionsPage() {
                   </div>
 
                   <div className="col-span-1 flex items-center justify-end gap-2">
-                    <button onClick={() => startEdit(r)} className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10">Editar</button>
-                    <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">×</button>
+                    <button onClick={() => startEdit(r)} className="rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10">
+                      Editar
+                    </button>
+                    <button onClick={() => removeTx(r.id)} className="text-white/50 hover:text-white/90" title="Remover">
+                      ×
+                    </button>
                   </div>
                 </div>
               );
@@ -591,7 +644,9 @@ export default function TransactionsPage() {
                   <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
                     <option value="">(Conta)</option>
                     {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -600,15 +655,23 @@ export default function TransactionsPage() {
                   <select className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editCategoryId} onChange={(e) => setEditCategoryId(e.target.value)}>
                     <option value="">(Categoria)</option>
                     {filteredEditCategories.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
                     ))}
                   </select>
                 </div>
 
                 <div className="col-span-3 flex items-center justify-end gap-2">
-                  <button onClick={() => void saveEdit(r.id)} className="rounded bg-white px-3 py-2 text-xs font-medium text-black" type="button" disabled={busy}>Salvar</button>
-                  <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>Cancelar</button>
-                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>Remover</button>
+                  <button onClick={() => void saveEdit(r.id)} className="rounded bg-white px-3 py-2 text-xs font-medium text-black" type="button" disabled={busy}>
+                    Salvar
+                  </button>
+                  <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
+                    Cancelar
+                  </button>
+                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
+                    Remover
+                  </button>
                 </div>
               </div>
             );
