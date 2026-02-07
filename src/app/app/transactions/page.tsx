@@ -497,8 +497,11 @@ export default function TransactionsPage() {
 
       {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
-      <div className="overflow-hidden rounded border border-white/10">
-        <div className="grid grid-cols-13 gap-2 border-b border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60">
+      <div className="rounded border border-white/10">
+  <div className="overflow-x-auto">
+    <div className="min-w-[900px] overflow-hidden">
+      {/* ... SEU HEADER E SUAS LINHAS AQUI DENTRO ... */}
+    </div>
           <div className="col-span-2">Data</div>
           <div className="col-span-4">Descrição</div>
           <div className="col-span-2">Conta</div>
