@@ -67,6 +67,16 @@ function fmtBRL(cents: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function fmtBRDateTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function TransactionsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -368,7 +378,7 @@ export default function TransactionsPage() {
       });
       if (upErr) throw new Error(upErr.message);
 
-      // IMPORTANTe: comprovante mudou, então limpamos cache do OCR (pra não usar dado antigo)
+      // comprovante mudou => limpa cache
       const { error: dbErr } = await supabase
         .from('transactions')
         .update({ receipt_path: path, receipt_parsed: null, receipt_parsed_at: null })
@@ -386,8 +396,8 @@ export default function TransactionsPage() {
 
   // Cache OCR na edição:
   // - se existir receipt_parsed, usa direto (instantâneo)
-  // - senão chama OCR e salva no banco
-  async function parseReceiptForEdit(tx: Tx) {
+  // - "Reler" força OCR novo (ignora cache)
+  async function parseReceiptForEdit(tx: Tx, force = false) {
     if (!tx.receipt_path) return setError('Sem comprovante anexado');
 
     setError(null);
@@ -396,7 +406,7 @@ export default function TransactionsPage() {
     try {
       const cached = tx.receipt_parsed ?? null;
 
-      if (cached && (cached.dateStr || cached.amount || cached.merchant)) {
+      if (!force && cached && (cached.dateStr || cached.amount || cached.merchant)) {
         if (editingId !== tx.id) startEdit(tx);
 
         if (cached.dateStr) setEditDateStr(String(cached.dateStr));
@@ -645,8 +655,15 @@ export default function TransactionsPage() {
                   ))}
                 </select>
 
-                <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-2 text-[11px] text-[#D4AF37]">
-                  COMPROVANTE: Anexar → Ler (OCR) → Salvar
+                <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-2 text-[11px] text-[#D4AF37] space-y-1">
+                  <div>COMPROVANTE: Anexar → Ler (OCR) → Salvar</div>
+                  <div className="text-white/70">
+                    {!r.receipt_path
+                      ? 'Status: sem comprovante'
+                      : r.receipt_parsed_at
+                        ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}`
+                        : 'Status: comprovante anexado (não lido)'}
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -667,11 +684,11 @@ export default function TransactionsPage() {
 
                   <button
                     type="button"
-                    onClick={() => void parseReceiptForEdit(r)}
+                    onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)}
                     className="rounded border border-white/15 bg-black/20 px-3 py-2 text-xs text-white/80 hover:bg-white/10"
                     disabled={busy || !r.receipt_path}
                   >
-                    {busy ? 'Lendo…' : 'Ler'}
+                    {busy ? 'Lendo…' : r.receipt_parsed_at ? 'Reler' : 'Ler'}
                   </button>
 
                   {r.receipt_path && (
@@ -769,8 +786,15 @@ export default function TransactionsPage() {
                     </div>
 
                     <div className="col-span-4 space-y-2">
-                      <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-1 text-[11px] text-[#D4AF37]">
-                        COMPROVANTE (edição): Anexar → Ler (OCR) → Salvar
+                      <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-1 text-[11px] text-[#D4AF37] space-y-1">
+                        <div>COMPROVANTE (edição): Anexar → Ler (OCR) → Salvar</div>
+                        <div className="text-white/70">
+                          {!r.receipt_path
+                            ? 'Status: sem comprovante'
+                            : r.receipt_parsed_at
+                              ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}`
+                              : 'Status: comprovante anexado (não lido)'}
+                        </div>
                       </div>
 
                       <input
@@ -821,11 +845,11 @@ export default function TransactionsPage() {
 
                         <button
                           type="button"
-                          onClick={() => void parseReceiptForEdit(r)}
+                          onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)}
                           className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
                           disabled={busy || !r.receipt_path}
                         >
-                          {busy ? 'Lendo…' : 'Ler'}
+                          {busy ? 'Lendo…' : r.receipt_parsed_at ? 'Reler' : 'Ler'}
                         </button>
 
                         {r.receipt_path && (
