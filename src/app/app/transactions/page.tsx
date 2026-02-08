@@ -24,6 +24,10 @@ type Tx = {
   user_id: string;
   receipt_path: string | null;
 
+  // cache OCR (jsonb)
+  receipt_parsed?: ParsedReceipt | null;
+  receipt_parsed_at?: string | null;
+
   account?: Account | null;
   category?: Category | null;
 };
@@ -152,7 +156,9 @@ export default function TransactionsPage() {
       supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
       supabase
         .from('transactions')
-        .select('id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path')
+        .select(
+          'id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path,receipt_parsed,receipt_parsed_at'
+        )
         .order('occurred_at', { ascending: false })
         .limit(200),
     ]);
@@ -362,7 +368,12 @@ export default function TransactionsPage() {
       });
       if (upErr) throw new Error(upErr.message);
 
-      const { error: dbErr } = await supabase.from('transactions').update({ receipt_path: path }).eq('id', txId);
+      // IMPORTANTe: comprovante mudou, então limpamos cache do OCR (pra não usar dado antigo)
+      const { error: dbErr } = await supabase
+        .from('transactions')
+        .update({ receipt_path: path, receipt_parsed: null, receipt_parsed_at: null })
+        .eq('id', txId);
+
       if (dbErr) throw new Error(dbErr.message);
 
       await loadAll();
@@ -373,6 +384,9 @@ export default function TransactionsPage() {
     }
   }
 
+  // Cache OCR na edição:
+  // - se existir receipt_parsed, usa direto (instantâneo)
+  // - senão chama OCR e salva no banco
   async function parseReceiptForEdit(tx: Tx) {
     if (!tx.receipt_path) return setError('Sem comprovante anexado');
 
@@ -380,13 +394,37 @@ export default function TransactionsPage() {
     setBusyId(tx.id);
 
     try {
+      const cached = tx.receipt_parsed ?? null;
+
+      if (cached && (cached.dateStr || cached.amount || cached.merchant)) {
+        if (editingId !== tx.id) startEdit(tx);
+
+        if (cached.dateStr) setEditDateStr(String(cached.dateStr));
+        if (cached.amount) setEditAmount(String(cached.amount));
+        if (cached.merchant) setEditDescription(String(cached.merchant));
+        return;
+      }
+
       const parsed = await ocrFromPath(tx.receipt_path);
+
+      const supabase = supabaseBrowser();
+      const { error: cacheErr } = await supabase
+        .from('transactions')
+        .update({
+          receipt_parsed: parsed,
+          receipt_parsed_at: new Date().toISOString(),
+        })
+        .eq('id', tx.id);
+
+      if (cacheErr) throw new Error(cacheErr.message);
 
       if (editingId !== tx.id) startEdit(tx);
 
       if (parsed.dateStr) setEditDateStr(String(parsed.dateStr));
       if (parsed.amount) setEditAmount(String(parsed.amount));
       if (parsed.merchant) setEditDescription(String(parsed.merchant));
+
+      await loadAll();
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
     } finally {
