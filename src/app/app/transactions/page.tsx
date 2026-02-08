@@ -452,7 +452,7 @@ export default function TransactionsPage() {
             <input
               type="file"
               accept="image/*"
-              capture="environment"
+             
               className="hidden"
               disabled={busyId === 'ADD'}
               onChange={(e) => {
@@ -608,7 +608,7 @@ export default function TransactionsPage() {
                     <input
                       type="file"
                       accept="image/*"
-                      capture="environment"
+                     
                       className="hidden"
                       disabled={busy}
                       onChange={(e) => {
@@ -763,7 +763,7 @@ export default function TransactionsPage() {
                           <input
                             type="file"
                             accept="image/*"
-                            capture="environment"
+                           
                             className="hidden"
                             disabled={busy}
                             onChange={(e) => {
