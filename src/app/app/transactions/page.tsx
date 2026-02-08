@@ -40,6 +40,13 @@ function todayYYYYMMDD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function currentYYYYMM() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+}
+
 function isoToYYYYMMDD(iso: string) {
   const d = new Date(iso);
   const yyyy = d.getUTCFullYear();
@@ -77,6 +84,13 @@ function fmtBRDateTime(iso: string) {
   });
 }
 
+function yyyyMmFromIso(iso: string) {
+  const d = new Date(iso);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+}
+
 export default function TransactionsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -84,6 +98,11 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // FILTERS
+  const [filterMonth, setFilterMonth] = useState<string>(() => currentYYYYMM()); // "YYYY-MM"
+  const [filterAccountId, setFilterAccountId] = useState<string>(''); // '' = todos
+  const [filterCategoryId, setFilterCategoryId] = useState<string>(''); // '' = todos
 
   // ADD form
   const [kind, setKind] = useState<'income' | 'expense'>('expense');
@@ -108,9 +127,23 @@ export default function TransactionsPage() {
   const filteredCategories = useMemo(() => categories.filter((c) => c.kind === kind), [categories, kind]);
   const filteredEditCategories = useMemo(() => categories.filter((c) => c.kind === editKind), [categories, editKind]);
 
-  const total = useMemo(() => {
+  // filtered list (client-side)
+  const filteredTxs = useMemo(() => {
+    return txs.filter((t) => {
+      if (filterMonth && yyyyMmFromIso(t.occurred_at) !== filterMonth) return false;
+      if (filterAccountId && (t.account_id ?? '') !== filterAccountId) return false;
+      if (filterCategoryId && (t.category_id ?? '') !== filterCategoryId) return false;
+      return true;
+    });
+  }, [txs, filterMonth, filterAccountId, filterCategoryId]);
+
+  const totalAllLoaded = useMemo(() => {
     return txs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
   }, [txs]);
+
+  const totalFiltered = useMemo(() => {
+    return filteredTxs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
+  }, [filteredTxs]);
 
   async function getUserIdOrError(client: any) {
     const { data, error } = await client.auth.getUser();
@@ -449,9 +482,69 @@ export default function TransactionsPage() {
           <h1 className="text-2xl font-semibold">Transações</h1>
           <p className="text-sm text-white/60">Lançamentos de entrada/saída</p>
         </div>
-        <div className="text-sm text-white/60">Saldo (lista): {fmtBRL(total)}</div>
+
+        <div className="text-right text-sm text-white/60 space-y-1">
+          <div>Saldo (período filtrado): <span className="text-white/90">{fmtBRL(totalFiltered)}</span></div>
+          <div>Saldo (lista carregada): <span className="text-white/70">{fmtBRL(totalAllLoaded)}</span></div>
+        </div>
       </div>
 
+      {/* FILTROS */}
+      <div className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-12">
+        <div className="md:col-span-3">
+          <div className="text-xs text-white/60 mb-1">Mês</div>
+          <input
+            type="month"
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value)}
+          />
+        </div>
+
+        <div className="md:col-span-4">
+          <div className="text-xs text-white/60 mb-1">Conta</div>
+          <select
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={filterAccountId}
+            onChange={(e) => setFilterAccountId(e.target.value)}
+          >
+            <option value="">(Todas)</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-4">
+          <div className="text-xs text-white/60 mb-1">Categoria</div>
+          <select
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={filterCategoryId}
+            onChange={(e) => setFilterCategoryId(e.target.value)}
+          >
+            <option value="">(Todas)</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-1 flex items-end">
+          <button
+            type="button"
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10"
+            onClick={() => {
+              setFilterMonth(currentYYYYMM());
+              setFilterAccountId('');
+              setFilterCategoryId('');
+            }}
+          >
+            Limpar
+          </button>
+        </div>
+      </div>
+
+      {/* ADD */}
       <form onSubmit={addTx} className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-8">
         <select className="rounded border border-white/15 bg-black/20 p-3" value={kind} onChange={(e) => setKind(e.target.value as any)}>
           <option value="expense">Saída</option>
@@ -555,10 +648,10 @@ export default function TransactionsPage() {
       <div className="space-y-3 md:hidden">
         {loading ? (
           <div className="rounded border border-white/10 bg-white/5 p-4 text-sm text-white/60">Carregando…</div>
-        ) : txs.length === 0 ? (
-          <div className="rounded border border-white/10 bg-white/5 p-4 text-sm text-white/60">Sem transações ainda.</div>
+        ) : filteredTxs.length === 0 ? (
+          <div className="rounded border border-white/10 bg-white/5 p-4 text-sm text-white/60">Sem transações para esse filtro.</div>
         ) : (
-          txs.map((r) => {
+          filteredTxs.map((r) => {
             const editing = editingId === r.id;
             const busy = busyId === r.id;
 
@@ -742,10 +835,10 @@ export default function TransactionsPage() {
 
             {loading ? (
               <div className="p-4 text-sm text-white/60">Carregando…</div>
-            ) : txs.length === 0 ? (
-              <div className="p-4 text-sm text-white/60">Sem transações ainda.</div>
+            ) : filteredTxs.length === 0 ? (
+              <div className="p-4 text-sm text-white/60">Sem transações para esse filtro.</div>
             ) : (
-              txs.map((r) => {
+              filteredTxs.map((r) => {
                 const editing = editingId === r.id;
                 const busy = busyId === r.id;
 
