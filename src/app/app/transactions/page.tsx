@@ -197,6 +197,7 @@ export default function TransactionsPage() {
     setEditingId(null);
   }
 
+  // OCR AUTOMÁTICO no cadastro ao anexar
   async function uploadTempReceiptForAdd(file: File) {
     setError(null);
     setBusyId('ADD');
@@ -215,6 +216,16 @@ export default function TransactionsPage() {
       if (upErr) throw new Error(upErr.message);
 
       setAddReceiptPath(tmpPath);
+
+      // roda OCR automaticamente (não bloqueia upload)
+      try {
+        const parsed = await ocrFromPath(tmpPath);
+        if (parsed.dateStr) setDateStr(String(parsed.dateStr));
+        if (parsed.amount) setAmount(String(parsed.amount));
+        if (parsed.merchant) setDescription(String(parsed.merchant));
+      } catch (e: any) {
+        setError(e?.message ? String(e.message) : String(e));
+      }
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
     } finally {
@@ -230,7 +241,6 @@ export default function TransactionsPage() {
 
     try {
       const parsed = await ocrFromPath(addReceiptPath);
-
       if (parsed.dateStr) setDateStr(String(parsed.dateStr));
       if (parsed.amount) setAmount(String(parsed.amount));
       if (parsed.merchant) setDescription(String(parsed.merchant));
@@ -452,7 +462,6 @@ export default function TransactionsPage() {
             <input
               type="file"
               accept="image/*"
-             
               className="hidden"
               disabled={busyId === 'ADD'}
               onChange={(e) => {
@@ -608,7 +617,6 @@ export default function TransactionsPage() {
                     <input
                       type="file"
                       accept="image/*"
-                     
                       className="hidden"
                       disabled={busy}
                       onChange={(e) => {
@@ -654,7 +662,7 @@ export default function TransactionsPage() {
                   <button onClick={cancelEdit} className="rounded border border-white/15 px-4 py-3 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
                     Cancelar
                   </button>
-                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
+                  <button onClick={() => removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
                     Remover
                   </button>
                 </div>
@@ -763,7 +771,6 @@ export default function TransactionsPage() {
                           <input
                             type="file"
                             accept="image/*"
-                           
                             className="hidden"
                             disabled={busy}
                             onChange={(e) => {
