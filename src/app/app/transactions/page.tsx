@@ -732,19 +732,26 @@ export default function TransactionsPage() {
             ) : (
               <div className="mt-3 space-y-2">
                 {topExpenseCats.map((c) => (
-                  <div key={c.id} className="space-y-1">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <div className="text-sm text-white/80 truncate">{c.name}</div>
-                      <div className="text-sm text-red-200">{fmtBRL(c.total_cents)}</div>
-                    </div>
-                    <div className="h-2 rounded bg-white/10 overflow-hidden">
-                      <div
-                        className="h-2 rounded bg-red-400/60"
-                        style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopExpense) * 100))}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
+  <button
+    key={c.id}
+    type="button"
+    onClick={() => setFilterCategoryId(c.id)}
+    className="w-full text-left space-y-1 rounded-lg p-2 -m-2 hover:bg-white/5 transition"
+    title="Filtrar por esta categoria"
+  >
+    <div className="flex items-baseline justify-between gap-3">
+      <div className="text-sm text-white/80 truncate">{c.name}</div>
+      <div className="text-sm text-red-200">{fmtBRL(c.total_cents)}</div>
+    </div>
+
+    <div className="h-2 rounded bg-white/10 overflow-hidden">
+      <div
+        className="h-2 rounded bg-red-400/60"
+        style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopExpense) * 100))}%` }}
+      />
+    </div>
+  </button>
+))}
               </div>
             )}
           </div>
@@ -760,19 +767,26 @@ export default function TransactionsPage() {
             ) : (
               <div className="mt-3 space-y-2">
                 {topIncomeCats.map((c) => (
-                  <div key={c.id} className="space-y-1">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <div className="text-sm text-white/80 truncate">{c.name}</div>
-                      <div className="text-sm text-emerald-200">{fmtBRL(c.total_cents)}</div>
-                    </div>
-                    <div className="h-2 rounded bg-white/10 overflow-hidden">
-                      <div
-                        className="h-2 rounded bg-emerald-400/60"
-                        style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopIncome) * 100))}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
+  <button
+    key={c.id}
+    type="button"
+    onClick={() => setFilterCategoryId(c.id)}
+    className="w-full text-left space-y-1 rounded-lg p-2 -m-2 hover:bg-white/5 transition"
+    title="Filtrar por esta categoria"
+  >
+    <div className="flex items-baseline justify-between gap-3">
+      <div className="text-sm text-white/80 truncate">{c.name}</div>
+      <div className="text-sm text-emerald-200">{fmtBRL(c.total_cents)}</div>
+    </div>
+
+    <div className="h-2 rounded bg-white/10 overflow-hidden">
+      <div
+        className="h-2 rounded bg-emerald-400/60"
+        style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopIncome) * 100))}%` }}
+      />
+    </div>
+  </button>
+))}
               </div>
             )}
           </div>
