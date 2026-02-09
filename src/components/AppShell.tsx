@@ -9,8 +9,10 @@ const nav = [
   { href: '/app/transactions', label: 'Transações', icon: '⇄' },
   { href: '/app/accounts', label: 'Contas', icon: '🏦' },
   { href: '/app/categories', label: 'Categorias', icon: '🏷' },
-  { href: '/app/reports/month', label: 'Rel. Mês', icon: '📅' },
-  { href: '/app/reports/year', label: 'Rel. Ano', icon: '📈' },
+
+  // rotas reais existentes no seu projeto:
+  { href: '/reports/monthly', label: 'Rel. Mês', icon: '📅' },
+  { href: '/reports/yearly', label: 'Rel. Ano', icon: '📈' },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -54,7 +56,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
 
-          <button onClick={logout} className="rounded bg-[#D4AF37] px-3 py-1.5 text-sm font-medium text-black">
+          <button
+            onClick={logout}
+            className="rounded bg-[#D4AF37] px-3 py-1.5 text-sm font-medium text-black"
+          >
             Sair
           </button>
         </div>
