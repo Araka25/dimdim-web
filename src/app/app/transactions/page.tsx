@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, FormEvent } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
 type Account = { id: string; name: string };
@@ -37,6 +37,9 @@ type Totals = {
   expense_cents: number;
   net_cents: number;
 };
+
+type TopCatRow = { category_id: string; total_cents: number };
+type TopCatUi = { id: string; name: string; total_cents: number };
 
 const PAGE_SIZE = 50;
 
@@ -144,10 +147,14 @@ export default function TransactionsPage() {
   const [filterAccountId, setFilterAccountId] = useState<string>(''); // '' = todos
   const [filterCategoryId, setFilterCategoryId] = useState<string>(''); // '' = todos
   const [filterKind, setFilterKind] = useState<KindFilter>(''); // '' = todos
-  const [filterSearch, setFilterSearch] = useState<string>(''); // texto livre
+  const [filterSearch, setFilterSearch] = useState<string>('');
 
   // Totals do período (server-side via RPC)
   const [totals, setTotals] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+
+  // Option 5: Top categorias (RPC)
+  const [topExpenseCats, setTopExpenseCats] = useState<TopCatUi[]>([]);
+  const [topIncomeCats, setTopIncomeCats] = useState<TopCatUi[]>([]);
 
   // ADD form
   const [kind, setKind] = useState<'income' | 'expense'>('expense');
@@ -240,14 +247,14 @@ export default function TransactionsPage() {
     return { accountsData, categoriesData };
   }
 
-  async function loadTotals() {
+  async function loadTotalsAndTopCats(categoriesData: Category[]) {
     const supabase = supabaseBrowser();
     const userId = await getUserIdOrError(supabase);
     const { startIso, endIso } = monthRangeUTC(filterMonth);
-
     const search = filterSearch.trim() || null;
 
-    const { data, error } = await supabase.rpc('transactions_totals', {
+    // Totais (RPC)
+    const totalsRes = await supabase.rpc('transactions_totals', {
       p_user_id: userId,
       p_start: startIso,
       p_end: endIso,
@@ -256,15 +263,56 @@ export default function TransactionsPage() {
       p_kind: filterKind || null,
       p_search: search,
     });
+    if (totalsRes.error) throw new Error(totalsRes.error.message);
 
-    if (error) throw new Error(error.message);
-
-    const row = Array.isArray(data) ? data[0] : data;
+    const trow = Array.isArray(totalsRes.data) ? totalsRes.data[0] : totalsRes.data;
     setTotals({
-      income_cents: Number(row?.income_cents ?? 0),
-      expense_cents: Number(row?.expense_cents ?? 0),
-      net_cents: Number(row?.net_cents ?? 0),
+      income_cents: Number(trow?.income_cents ?? 0),
+      expense_cents: Number(trow?.expense_cents ?? 0),
+      net_cents: Number(trow?.net_cents ?? 0),
     });
+
+    // Top categorias (RPC)
+    const [topExp, topInc] = await Promise.all([
+      supabase.rpc('transactions_top_categories', {
+        p_user_id: userId,
+        p_start: startIso,
+        p_end: endIso,
+        p_account_id: filterAccountId || null,
+        p_kind: 'expense',
+        p_search: search,
+        p_limit: 5,
+      }),
+      supabase.rpc('transactions_top_categories', {
+        p_user_id: userId,
+        p_start: startIso,
+        p_end: endIso,
+        p_account_id: filterAccountId || null,
+        p_kind: 'income',
+        p_search: search,
+        p_limit: 5,
+      }),
+    ]);
+
+    if (topExp.error) throw new Error(topExp.error.message);
+    if (topInc.error) throw new Error(topInc.error.message);
+
+    const catMap = new Map(categoriesData.map((c) => [c.id, c.name]));
+
+    const expRows: TopCatUi[] = ((topExp.data as TopCatRow[]) || []).map((r) => ({
+      id: r.category_id,
+      name: catMap.get(r.category_id) || 'Sem categoria',
+      total_cents: Number(r.total_cents ?? 0),
+    }));
+
+    const incRows: TopCatUi[] = ((topInc.data as TopCatRow[]) || []).map((r) => ({
+      id: r.category_id,
+      name: catMap.get(r.category_id) || 'Sem categoria',
+      total_cents: Number(r.total_cents ?? 0),
+    }));
+
+    setTopExpenseCats(expRows);
+    setTopIncomeCats(incRows);
   }
 
   function decorateRows(rows: Tx[], accountsData: Account[], categoriesData: Category[]) {
@@ -286,7 +334,7 @@ export default function TransactionsPage() {
 
     try {
       const { accountsData, categoriesData } = await loadLookups();
-      await loadTotals();
+      await loadTotalsAndTopCats(categoriesData);
 
       const supabase = supabaseBrowser();
       const { startIso, endIso } = monthRangeUTC(filterMonth);
@@ -329,6 +377,8 @@ export default function TransactionsPage() {
       setHasMore(false);
       setCursorOccurredAt(null);
       setCursorId(null);
+      setTopExpenseCats([]);
+      setTopIncomeCats([]);
     } finally {
       setLoading(false);
     }
@@ -558,6 +608,7 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
 
     if (editingId === id) setEditingId(null);
+
     await loadFirstPage();
   }
 
@@ -636,32 +687,99 @@ export default function TransactionsPage() {
     }
   }
 
+  const maxTopExpense = Math.max(1, ...topExpenseCats.map((x) => x.total_cents));
+  const maxTopIncome = Math.max(1, ...topIncomeCats.map((x) => x.total_cents));
+
   return (
     <section className="space-y-6">
-      {/* HEADER + DASHBOARD (5) */}
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Transações</h1>
-          <p className="text-sm text-white/60">Lançamentos de entrada/saída</p>
+      {/* Painel (opção 5) - mais profissional / mobile alinhado */}
+      <div className="space-y-3">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">Transações</h1>
+            <p className="text-sm text-white/60">Lançamentos de entrada/saída</p>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full md:w-auto">
-          <div className="rounded border border-white/10 bg-white/5 p-3">
+        {/* Cards: 2 colunas no mobile, líquido full */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-4">
             <div className="text-xs text-white/60">Entradas (filtro)</div>
-            <div className="text-emerald-300 font-semibold">{fmtBRL(totals.income_cents)}</div>
+            <div className="mt-1 text-lg font-semibold text-emerald-300">{fmtBRL(totals.income_cents)}</div>
           </div>
-          <div className="rounded border border-white/10 bg-white/5 p-3">
+
+          <div className="rounded-lg border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-4">
             <div className="text-xs text-white/60">Saídas (filtro)</div>
-            <div className="text-red-300 font-semibold">{fmtBRL(totals.expense_cents)}</div>
+            <div className="mt-1 text-lg font-semibold text-red-300">{fmtBRL(totals.expense_cents)}</div>
           </div>
-          <div className="rounded border border-white/10 bg-white/5 p-3">
+
+          <div className="col-span-2 rounded-lg border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-4">
             <div className="text-xs text-white/60">Líquido (filtro)</div>
-            <div className="text-white/90 font-semibold">{fmtBRL(totals.net_cents)}</div>
+            <div className="mt-1 text-xl font-semibold text-white/90">{fmtBRL(totals.net_cents)}</div>
+          </div>
+        </div>
+
+        {/* Top categorias */}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium">Top categorias (Saídas)</div>
+              <div className="text-xs text-white/50">mês filtrado</div>
+            </div>
+
+            {topExpenseCats.length === 0 ? (
+              <div className="mt-3 text-sm text-white/60">Sem dados.</div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {topExpenseCats.map((c) => (
+                  <div key={c.id} className="space-y-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <div className="text-sm text-white/80 truncate">{c.name}</div>
+                      <div className="text-sm text-red-200">{fmtBRL(c.total_cents)}</div>
+                    </div>
+                    <div className="h-2 rounded bg-white/10 overflow-hidden">
+                      <div
+                        className="h-2 rounded bg-red-400/60"
+                        style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopExpense) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium">Top categorias (Entradas)</div>
+              <div className="text-xs text-white/50">mês filtrado</div>
+            </div>
+
+            {topIncomeCats.length === 0 ? (
+              <div className="mt-3 text-sm text-white/60">Sem dados.</div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {topIncomeCats.map((c) => (
+                  <div key={c.id} className="space-y-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <div className="text-sm text-white/80 truncate">{c.name}</div>
+                      <div className="text-sm text-emerald-200">{fmtBRL(c.total_cents)}</div>
+                    </div>
+                    <div className="h-2 rounded bg-white/10 overflow-hidden">
+                      <div
+                        className="h-2 rounded bg-emerald-400/60"
+                        style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopIncome) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* FILTROS (1,2,3) */}
+      {/* Filtros */}
       <div className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-12">
         <div className="md:col-span-3">
           <div className="text-xs text-white/60 mb-1">Mês</div>
@@ -797,7 +915,12 @@ export default function TransactionsPage() {
           onChange={(e) => setDateStr(e.target.value)}
         />
 
-        <input className="rounded border border-white/15 bg-black/20 p-3 md:col-span-2" placeholder="Descrição" value={description} onChange={(e) => setDescription(e.target.value)} />
+        <input
+          className="rounded border border-white/15 bg-black/20 p-3 md:col-span-2"
+          placeholder="Descrição"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
 
         <div className="flex gap-2 md:col-span-2">
           <input
@@ -829,7 +952,12 @@ export default function TransactionsPage() {
             />
           </label>
 
-          <button type="button" onClick={() => void readReceiptForAdd()} className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10" disabled={busyId === 'ADD' || !addReceiptPath}>
+          <button
+            type="button"
+            onClick={() => void readReceiptForAdd()}
+            className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+            disabled={busyId === 'ADD' || !addReceiptPath}
+          >
             {busyId === 'ADD' ? 'Lendo…' : 'Ler'}
           </button>
 
@@ -904,9 +1032,19 @@ export default function TransactionsPage() {
               <div key={r.id} className="rounded border border-white/10 bg-white/5 p-4 space-y-3">
                 <div className="text-xs text-white/60">Editando</div>
 
-                <input type="date" className="w-full rounded border border-white/15 bg-black/20 p-3 pr-10 text-sm text-white font-medium tracking-wide" value={editDateStr} onChange={(e) => setEditDateStr(e.target.value)} />
+                <input
+                  type="date"
+                  className="w-full rounded border border-white/15 bg-black/20 p-3 pr-10 text-sm text-white font-medium tracking-wide"
+                  value={editDateStr}
+                  onChange={(e) => setEditDateStr(e.target.value)}
+                />
 
-                <input className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Descrição" />
+                <input
+                  className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Descrição"
+                />
 
                 <div className="flex gap-2">
                   <select
@@ -923,7 +1061,12 @@ export default function TransactionsPage() {
                     <option value="income">Entrada</option>
                   </select>
 
-                  <input className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 1.000,00)" />
+                  <input
+                    className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+                    value={editAmount}
+                    onChange={(e) => setEditAmount(e.target.value)}
+                    placeholder="Valor (ex: 1.000,00)"
+                  />
                 </div>
 
                 <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
@@ -947,7 +1090,11 @@ export default function TransactionsPage() {
                 <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-2 text-[11px] text-[#D4AF37] space-y-1">
                   <div>COMPROVANTE: Anexar → Ler (OCR) → Salvar</div>
                   <div className="text-white/70">
-                    {!r.receipt_path ? 'Status: sem comprovante' : r.receipt_parsed_at ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}` : 'Status: comprovante anexado (não lido)'}
+                    {!r.receipt_path
+                      ? 'Status: sem comprovante'
+                      : r.receipt_parsed_at
+                        ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}`
+                        : 'Status: comprovante anexado (não lido)'}
                   </div>
                 </div>
 
@@ -967,7 +1114,12 @@ export default function TransactionsPage() {
                     />
                   </label>
 
-                  <button type="button" onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)} className="rounded border border-white/15 bg-black/20 px-3 py-2 text-xs text-white/80 hover:bg-white/10" disabled={busy || !r.receipt_path}>
+                  <button
+                    type="button"
+                    onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)}
+                    className="rounded border border-white/15 bg-black/20 px-3 py-2 text-xs text-white/80 hover:bg-white/10"
+                    disabled={busy || !r.receipt_path}
+                  >
                     {busy ? 'Lendo…' : r.receipt_parsed_at ? 'Reler' : 'Ler'}
                   </button>
 
@@ -997,7 +1149,7 @@ export default function TransactionsPage() {
                   <button onClick={cancelEdit} className="rounded border border-white/15 px-4 py-3 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
                     Cancelar
                   </button>
-                  <button onClick={() => removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
+                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
                     Remover
                   </button>
                 </div>
@@ -1007,13 +1159,18 @@ export default function TransactionsPage() {
         )}
 
         {!loading && hasMore && (
-          <button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60">
+          <button
+            type="button"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60"
+          >
             {loadingMore ? 'Carregando…' : 'Carregar mais'}
           </button>
         )}
       </div>
 
-      {/* DESKTOP: tabela (mantive simples; edição continua inline) */}
+      {/* DESKTOP: tabela */}
       <div className="hidden md:block rounded border border-white/10">
         <div className="overflow-x-auto">
           <div className="min-w-[900px] overflow-hidden">
@@ -1063,18 +1220,32 @@ export default function TransactionsPage() {
                 return (
                   <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
                     <div className="col-span-2">
-                      <input type="date" className="w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide" value={editDateStr} onChange={(e) => setEditDateStr(e.target.value)} />
+                      <input
+                        type="date"
+                        className="w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide"
+                        value={editDateStr}
+                        onChange={(e) => setEditDateStr(e.target.value)}
+                      />
                     </div>
 
                     <div className="col-span-4 space-y-2">
                       <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-1 text-[11px] text-[#D4AF37] space-y-1">
                         <div>COMPROVANTE (edição): Anexar → Ler (OCR) → Salvar</div>
                         <div className="text-white/70">
-                          {!r.receipt_path ? 'Status: sem comprovante' : r.receipt_parsed_at ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}` : 'Status: comprovante anexado (não lido)'}
+                          {!r.receipt_path
+                            ? 'Status: sem comprovante'
+                            : r.receipt_parsed_at
+                              ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}`
+                              : 'Status: comprovante anexado (não lido)'}
                         </div>
                       </div>
 
-                      <input className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Descrição" />
+                      <input
+                        className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        placeholder="Descrição"
+                      />
 
                       <div className="flex gap-2">
                         <select
@@ -1091,7 +1262,12 @@ export default function TransactionsPage() {
                           <option value="income">Entrada</option>
                         </select>
 
-                        <input className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 1.000,00)" />
+                        <input
+                          className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
+                          value={editAmount}
+                          onChange={(e) => setEditAmount(e.target.value)}
+                          placeholder="Valor (ex: 1.000,00)"
+                        />
                       </div>
 
                       <div className="flex flex-wrap gap-2 pt-1">
@@ -1110,7 +1286,12 @@ export default function TransactionsPage() {
                           />
                         </label>
 
-                        <button type="button" onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)} className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10" disabled={busy || !r.receipt_path}>
+                        <button
+                          type="button"
+                          onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)}
+                          className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
+                          disabled={busy || !r.receipt_path}
+                        >
                           {busy ? 'Lendo…' : r.receipt_parsed_at ? 'Reler' : 'Ler'}
                         </button>
 
@@ -1174,7 +1355,12 @@ export default function TransactionsPage() {
 
             {!loading && hasMore && (
               <div className="p-4">
-                <button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60">
+                <button
+                  type="button"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60"
+                >
                   {loadingMore ? 'Carregando…' : 'Carregar mais'}
                 </button>
               </div>
