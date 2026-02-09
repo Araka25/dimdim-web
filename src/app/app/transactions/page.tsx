@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, FormEvent } from 'react';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
 type Account = { id: string; name: string };
@@ -32,6 +32,14 @@ type Tx = {
   category?: Category | null;
 };
 
+type Totals = {
+  income_cents: number;
+  expense_cents: number;
+  net_cents: number;
+};
+
+const PAGE_SIZE = 50;
+
 function todayYYYYMMDD() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -53,6 +61,16 @@ function isoToYYYYMMDD(iso: string) {
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(d.getUTCDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function monthRangeUTC(yyyyMM: string) {
+  // yyyyMM = "YYYY-MM"
+  const [yStr, mStr] = yyyyMM.split('-');
+  const y = Number(yStr);
+  const m = Number(mStr); // 1-12
+  const start = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0));
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
 function getExt(file: File) {
@@ -84,25 +102,24 @@ function fmtBRDateTime(iso: string) {
   });
 }
 
-function yyyyMmFromIso(iso: string) {
-  const d = new Date(iso);
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  return `${yyyy}-${mm}`;
-}
-
 export default function TransactionsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // FILTERS
+  // FILTERS (server-side)
   const [filterMonth, setFilterMonth] = useState<string>(() => currentYYYYMM()); // "YYYY-MM"
   const [filterAccountId, setFilterAccountId] = useState<string>(''); // '' = todos
   const [filterCategoryId, setFilterCategoryId] = useState<string>(''); // '' = todos
+
+  // Totals do período (server-side via RPC)
+  const [totals, setTotals] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
 
   // ADD form
   const [kind, setKind] = useState<'income' | 'expense'>('expense');
@@ -127,23 +144,11 @@ export default function TransactionsPage() {
   const filteredCategories = useMemo(() => categories.filter((c) => c.kind === kind), [categories, kind]);
   const filteredEditCategories = useMemo(() => categories.filter((c) => c.kind === editKind), [categories, editKind]);
 
-  // filtered list (client-side)
-  const filteredTxs = useMemo(() => {
-    return txs.filter((t) => {
-      if (filterMonth && yyyyMmFromIso(t.occurred_at) !== filterMonth) return false;
-      if (filterAccountId && (t.account_id ?? '') !== filterAccountId) return false;
-      if (filterCategoryId && (t.category_id ?? '') !== filterCategoryId) return false;
-      return true;
-    });
-  }, [txs, filterMonth, filterAccountId, filterCategoryId]);
-
   const totalAllLoaded = useMemo(() => {
     return txs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
   }, [txs]);
 
-  const totalFiltered = useMemo(() => {
-    return filteredTxs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
-  }, [filteredTxs]);
+  const lastLoadKeyRef = useRef<string>('');
 
   async function getUserIdOrError(client: any) {
     const { data, error } = await client.auth.getUser();
@@ -189,47 +194,155 @@ export default function TransactionsPage() {
     return json as ParsedReceipt;
   }
 
-  async function loadAll() {
+  function makeLoadKey() {
+    return `${filterMonth}|${filterAccountId || '-'}|${filterCategoryId || '-'}`;
+  }
+
+  async function loadLookups() {
+    const supabase = supabaseBrowser();
+    const [a, c] = await Promise.all([
+      supabase.from('accounts').select('id,name').order('created_at', { ascending: false }),
+      supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
+    ]);
+    if (a.error) throw new Error(a.error.message);
+    if (c.error) throw new Error(c.error.message);
+
+    setAccounts((a.data as Account[]) || []);
+    setCategories((c.data as Category[]) || []);
+  }
+
+  async function loadTotals() {
+    const supabase = supabaseBrowser();
+    const userId = await getUserIdOrError(supabase);
+    const { startIso, endIso } = monthRangeUTC(filterMonth);
+
+    const { data, error } = await supabase.rpc('transactions_totals', {
+      p_user_id: userId,
+      p_start: startIso,
+      p_end: endIso,
+      p_account_id: filterAccountId || null,
+      p_category_id: filterCategoryId || null,
+    });
+
+    if (error) throw new Error(error.message);
+
+    const row = Array.isArray(data) ? data[0] : data;
+    setTotals({
+      income_cents: Number(row?.income_cents ?? 0),
+      expense_cents: Number(row?.expense_cents ?? 0),
+      net_cents: Number(row?.net_cents ?? 0),
+    });
+  }
+
+  async function loadFirstPage() {
     setLoading(true);
     setError(null);
 
-    const supabase = supabaseBrowser();
-    const [a, c, t] = await Promise.all([
-      supabase.from('accounts').select('id,name').order('created_at', { ascending: false }),
-      supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
-      supabase
+    const thisKey = makeLoadKey();
+    lastLoadKeyRef.current = thisKey;
+
+    try {
+      await loadLookups();
+      await loadTotals();
+
+      const supabase = supabaseBrowser();
+      const { startIso, endIso } = monthRangeUTC(filterMonth);
+
+      let q = supabase
         .from('transactions')
         .select(
           'id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path,receipt_parsed,receipt_parsed_at'
         )
+        .gte('occurred_at', startIso)
+        .lt('occurred_at', endIso)
         .order('occurred_at', { ascending: false })
-        .limit(200),
-    ]);
+        .range(0, PAGE_SIZE - 1);
 
-    if (a.error) setError(a.error.message);
-    if (c.error) setError(c.error.message);
-    if (t.error) setError(t.error.message);
+      if (filterAccountId) q = q.eq('account_id', filterAccountId);
+      if (filterCategoryId) q = q.eq('category_id', filterCategoryId);
 
-    const accountsData = (a.data as Account[]) || [];
-    const categoriesData = (c.data as Category[]) || [];
-    const txData = (t.data as Tx[]) || [];
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
 
-    setAccounts(accountsData);
-    setCategories(categoriesData);
-    setTxs(
-      txData.map((row) => ({
+      // evita race (troca de filtros durante load)
+      if (lastLoadKeyRef.current !== thisKey) return;
+
+      const accountsMap = new Map(accounts.map((a) => [a.id, a]));
+      const categoriesMap = new Map(categories.map((c) => [c.id, c]));
+
+      const rows = ((data as Tx[]) || []).map((row) => ({
         ...row,
-        account: row.account_id ? accountsData.find((x) => x.id === row.account_id) ?? null : null,
-        category: row.category_id ? categoriesData.find((x) => x.id === row.category_id) ?? null : null,
-      }))
-    );
+        account: row.account_id ? accountsMap.get(row.account_id) ?? null : null,
+        category: row.category_id ? categoriesMap.get(row.category_id) ?? null : null,
+      }));
 
-    setLoading(false);
+      setTxs(rows);
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+      setTxs([]);
+      setHasMore(false);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadMore() {
+    if (loadingMore || loading) return;
+    if (!hasMore) return;
+
+    setLoadingMore(true);
+    setError(null);
+
+    const thisKey = makeLoadKey();
+
+    try {
+      const supabase = supabaseBrowser();
+      const { startIso, endIso } = monthRangeUTC(filterMonth);
+
+      const from = txs.length;
+      const to = from + PAGE_SIZE - 1;
+
+      let q = supabase
+        .from('transactions')
+        .select(
+          'id,occurred_at,description,amount_cents,kind,account_id,category_id,user_id,receipt_path,receipt_parsed,receipt_parsed_at'
+        )
+        .gte('occurred_at', startIso)
+        .lt('occurred_at', endIso)
+        .order('occurred_at', { ascending: false })
+        .range(from, to);
+
+      if (filterAccountId) q = q.eq('account_id', filterAccountId);
+      if (filterCategoryId) q = q.eq('category_id', filterCategoryId);
+
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+
+      if (makeLoadKey() !== thisKey) return;
+
+      const accountsMap = new Map(accounts.map((a) => [a.id, a]));
+      const categoriesMap = new Map(categories.map((c) => [c.id, c]));
+
+      const rows = ((data as Tx[]) || []).map((row) => ({
+        ...row,
+        account: row.account_id ? accountsMap.get(row.account_id) ?? null : null,
+        category: row.category_id ? categoriesMap.get(row.category_id) ?? null : null,
+      }));
+
+      setTxs((prev) => [...prev, ...rows]);
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   useEffect(() => {
-    loadAll();
-  }, []);
+    void loadFirstPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterMonth, filterAccountId, filterCategoryId]);
 
   function startEdit(tx: Tx) {
     setError(null);
@@ -347,7 +460,10 @@ export default function TransactionsPage() {
 
       setDescription('');
       setAmount('');
-      await loadAll();
+
+      // Recarrega página atual + totais (para refletir a nova transação)
+      await loadTotals();
+      await loadFirstPage();
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
     }
@@ -382,7 +498,8 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
 
     setEditingId(null);
-    await loadAll();
+    await loadTotals();
+    await loadFirstPage();
   }
 
   async function removeTx(id: string) {
@@ -393,7 +510,9 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
 
     if (editingId === id) setEditingId(null);
-    await loadAll();
+
+    await loadTotals();
+    await loadFirstPage();
   }
 
   async function uploadReceiptForEdit(txId: string, file: File) {
@@ -419,7 +538,7 @@ export default function TransactionsPage() {
 
       if (dbErr) throw new Error(dbErr.message);
 
-      await loadAll();
+      await loadFirstPage();
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
     } finally {
@@ -467,7 +586,7 @@ export default function TransactionsPage() {
       if (parsed.amount) setEditAmount(String(parsed.amount));
       if (parsed.merchant) setEditDescription(String(parsed.merchant));
 
-      await loadAll();
+      await loadFirstPage();
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
     } finally {
@@ -477,15 +596,25 @@ export default function TransactionsPage() {
 
   return (
     <section className="space-y-6">
-      <div className="flex items-end justify-between gap-3">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Transações</h1>
           <p className="text-sm text-white/60">Lançamentos de entrada/saída</p>
         </div>
 
-        <div className="text-right text-sm text-white/60 space-y-1">
-          <div>Saldo (período filtrado): <span className="text-white/90">{fmtBRL(totalFiltered)}</span></div>
-          <div>Saldo (lista carregada): <span className="text-white/70">{fmtBRL(totalAllLoaded)}</span></div>
+        <div className="text-sm text-white/70 space-y-1 md:text-right">
+          <div>
+            Total entradas (filtro): <span className="text-emerald-300 font-medium">{fmtBRL(totals.income_cents)}</span>
+          </div>
+          <div>
+            Total saídas (filtro): <span className="text-red-300 font-medium">{fmtBRL(totals.expense_cents)}</span>
+          </div>
+          <div>
+            Líquido (filtro): <span className="text-white/90 font-medium">{fmtBRL(totals.net_cents)}</span>
+          </div>
+          <div className="text-xs text-white/50">
+            (Debug) Líquido da lista carregada: {fmtBRL(totalAllLoaded)}
+          </div>
         </div>
       </div>
 
@@ -510,7 +639,9 @@ export default function TransactionsPage() {
           >
             <option value="">(Todas)</option>
             {accounts.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
             ))}
           </select>
         </div>
@@ -524,7 +655,9 @@ export default function TransactionsPage() {
           >
             <option value="">(Todas)</option>
             {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </select>
         </div>
@@ -648,10 +781,10 @@ export default function TransactionsPage() {
       <div className="space-y-3 md:hidden">
         {loading ? (
           <div className="rounded border border-white/10 bg-white/5 p-4 text-sm text-white/60">Carregando…</div>
-        ) : filteredTxs.length === 0 ? (
+        ) : txs.length === 0 ? (
           <div className="rounded border border-white/10 bg-white/5 p-4 text-sm text-white/60">Sem transações para esse filtro.</div>
         ) : (
-          filteredTxs.map((r) => {
+          txs.map((r) => {
             const editing = editingId === r.id;
             const busy = busyId === r.id;
 
@@ -810,13 +943,24 @@ export default function TransactionsPage() {
                   <button onClick={cancelEdit} className="rounded border border-white/15 px-4 py-3 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
                     Cancelar
                   </button>
-                  <button onClick={() => removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
+                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
                     Remover
                   </button>
                 </div>
               </div>
             );
           })
+        )}
+
+        {!loading && hasMore && (
+          <button
+            type="button"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60"
+          >
+            {loadingMore ? 'Carregando…' : 'Carregar mais'}
+          </button>
         )}
       </div>
 
@@ -835,10 +979,10 @@ export default function TransactionsPage() {
 
             {loading ? (
               <div className="p-4 text-sm text-white/60">Carregando…</div>
-            ) : filteredTxs.length === 0 ? (
+            ) : txs.length === 0 ? (
               <div className="p-4 text-sm text-white/60">Sem transações para esse filtro.</div>
             ) : (
-              filteredTxs.map((r) => {
+              txs.map((r) => {
                 const editing = editingId === r.id;
                 const busy = busyId === r.id;
 
@@ -1001,6 +1145,19 @@ export default function TransactionsPage() {
                   </div>
                 );
               })
+            )}
+
+            {!loading && hasMore && (
+              <div className="p-4">
+                <button
+                  type="button"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60"
+                >
+                  {loadingMore ? 'Carregando…' : 'Carregar mais'}
+                </button>
+              </div>
             )}
           </div>
         </div>
