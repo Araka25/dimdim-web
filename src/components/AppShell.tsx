@@ -11,8 +11,8 @@ const nav = [
   { href: '/app/categories', label: 'Categorias', icon: '🏷' },
 
   // rotas reais existentes no seu projeto:
-  { href: '/reports/monthly', label: 'Rel. Mês', icon: '📅' },
-  { href: '/reports/yearly', label: 'Rel. Ano', icon: '📈' },
+  { href: '/app/reports/monthly', label: 'Rel. Mês', icon: '📅' },
+  { href: '/app/reports/yearly', label: 'Rel. Ano', icon: '📈' },
 ];
 
 function isActive(pathname: string, href: string) {
