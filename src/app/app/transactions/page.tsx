@@ -24,7 +24,6 @@ type Tx = {
   user_id: string;
   receipt_path: string | null;
 
-  // cache OCR (jsonb)
   receipt_parsed?: ParsedReceipt | null;
   receipt_parsed_at?: string | null;
 
@@ -64,7 +63,6 @@ function isoToYYYYMMDD(iso: string) {
 }
 
 function monthRangeUTC(yyyyMM: string) {
-  // yyyyMM = "YYYY-MM"
   const [yStr, mStr] = yyyyMM.split('-');
   const y = Number(yStr);
   const m = Number(mStr); // 1-12
@@ -109,6 +107,9 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+
+  const [cursorOccurredAt, setCursorOccurredAt] = useState<string | null>(null);
+  const [cursorId, setCursorId] = useState<string | null>(null);
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -207,8 +208,13 @@ export default function TransactionsPage() {
     if (a.error) throw new Error(a.error.message);
     if (c.error) throw new Error(c.error.message);
 
-    setAccounts((a.data as Account[]) || []);
-    setCategories((c.data as Category[]) || []);
+    const accountsData = (a.data as Account[]) || [];
+    const categoriesData = (c.data as Category[]) || [];
+
+    setAccounts(accountsData);
+    setCategories(categoriesData);
+
+    return { accountsData, categoriesData };
   }
 
   async function loadTotals() {
@@ -234,6 +240,16 @@ export default function TransactionsPage() {
     });
   }
 
+  function decorateRows(rows: Tx[], accountsData: Account[], categoriesData: Category[]) {
+    const accountsMap = new Map(accountsData.map((a) => [a.id, a]));
+    const categoriesMap = new Map(categoriesData.map((c) => [c.id, c]));
+    return rows.map((row) => ({
+      ...row,
+      account: row.account_id ? accountsMap.get(row.account_id) ?? null : null,
+      category: row.category_id ? categoriesMap.get(row.category_id) ?? null : null,
+    }));
+  }
+
   async function loadFirstPage() {
     setLoading(true);
     setError(null);
@@ -242,7 +258,7 @@ export default function TransactionsPage() {
     lastLoadKeyRef.current = thisKey;
 
     try {
-      await loadLookups();
+      const { accountsData, categoriesData } = await loadLookups();
       await loadTotals();
 
       const supabase = supabaseBrowser();
@@ -256,7 +272,8 @@ export default function TransactionsPage() {
         .gte('occurred_at', startIso)
         .lt('occurred_at', endIso)
         .order('occurred_at', { ascending: false })
-        .range(0, PAGE_SIZE - 1);
+        .order('id', { ascending: false })
+        .limit(PAGE_SIZE);
 
       if (filterAccountId) q = q.eq('account_id', filterAccountId);
       if (filterCategoryId) q = q.eq('category_id', filterCategoryId);
@@ -264,24 +281,25 @@ export default function TransactionsPage() {
       const { data, error } = await q;
       if (error) throw new Error(error.message);
 
-      // evita race (troca de filtros durante load)
       if (lastLoadKeyRef.current !== thisKey) return;
 
-      const accountsMap = new Map(accounts.map((a) => [a.id, a]));
-      const categoriesMap = new Map(categories.map((c) => [c.id, c]));
-
-      const rows = ((data as Tx[]) || []).map((row) => ({
-        ...row,
-        account: row.account_id ? accountsMap.get(row.account_id) ?? null : null,
-        category: row.category_id ? categoriesMap.get(row.category_id) ?? null : null,
-      }));
+      const raw = (data as Tx[]) || [];
+      const rows = decorateRows(raw, accountsData, categoriesData);
 
       setTxs(rows);
-      setHasMore(rows.length === PAGE_SIZE);
+
+      const more = rows.length === PAGE_SIZE;
+      setHasMore(more);
+
+      const last = rows[rows.length - 1];
+      setCursorOccurredAt(last ? last.occurred_at : null);
+      setCursorId(last ? last.id : null);
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
       setTxs([]);
       setHasMore(false);
+      setCursorOccurredAt(null);
+      setCursorId(null);
     } finally {
       setLoading(false);
     }
@@ -290,6 +308,7 @@ export default function TransactionsPage() {
   async function loadMore() {
     if (loadingMore || loading) return;
     if (!hasMore) return;
+    if (!cursorOccurredAt || !cursorId) return;
 
     setLoadingMore(true);
     setError(null);
@@ -300,9 +319,6 @@ export default function TransactionsPage() {
       const supabase = supabaseBrowser();
       const { startIso, endIso } = monthRangeUTC(filterMonth);
 
-      const from = txs.length;
-      const to = from + PAGE_SIZE - 1;
-
       let q = supabase
         .from('transactions')
         .select(
@@ -311,7 +327,10 @@ export default function TransactionsPage() {
         .gte('occurred_at', startIso)
         .lt('occurred_at', endIso)
         .order('occurred_at', { ascending: false })
-        .range(from, to);
+        .order('id', { ascending: false })
+        // cursor: (occurred_at < cursorOccurredAt) OR (occurred_at = cursorOccurredAt AND id < cursorId)
+        .or(`occurred_at.lt.${cursorOccurredAt},and(occurred_at.eq.${cursorOccurredAt},id.lt.${cursorId})`)
+        .limit(PAGE_SIZE);
 
       if (filterAccountId) q = q.eq('account_id', filterAccountId);
       if (filterCategoryId) q = q.eq('category_id', filterCategoryId);
@@ -321,17 +340,19 @@ export default function TransactionsPage() {
 
       if (makeLoadKey() !== thisKey) return;
 
-      const accountsMap = new Map(accounts.map((a) => [a.id, a]));
-      const categoriesMap = new Map(categories.map((c) => [c.id, c]));
-
-      const rows = ((data as Tx[]) || []).map((row) => ({
-        ...row,
-        account: row.account_id ? accountsMap.get(row.account_id) ?? null : null,
-        category: row.category_id ? categoriesMap.get(row.category_id) ?? null : null,
-      }));
+      const raw = (data as Tx[]) || [];
+      const rows = decorateRows(raw, accounts, categories);
 
       setTxs((prev) => [...prev, ...rows]);
-      setHasMore(rows.length === PAGE_SIZE);
+
+      const more = rows.length === PAGE_SIZE;
+      setHasMore(more);
+
+      const last = rows[rows.length - 1];
+      if (last) {
+        setCursorOccurredAt(last.occurred_at);
+        setCursorId(last.id);
+      }
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
     } finally {
@@ -379,7 +400,6 @@ export default function TransactionsPage() {
 
       setAddReceiptPath(tmpPath);
 
-      // roda OCR automaticamente (não bloqueia upload)
       try {
         const parsed = await ocrFromPath(tmpPath);
         if (parsed.dateStr) setDateStr(String(parsed.dateStr));
@@ -461,7 +481,6 @@ export default function TransactionsPage() {
       setDescription('');
       setAmount('');
 
-      // Recarrega página atual + totais (para refletir a nova transação)
       await loadTotals();
       await loadFirstPage();
     } catch (e: any) {
@@ -530,7 +549,6 @@ export default function TransactionsPage() {
       });
       if (upErr) throw new Error(upErr.message);
 
-      // comprovante mudou => limpa cache
       const { error: dbErr } = await supabase
         .from('transactions')
         .update({ receipt_path: path, receipt_parsed: null, receipt_parsed_at: null })
@@ -546,9 +564,6 @@ export default function TransactionsPage() {
     }
   }
 
-  // Cache OCR na edição:
-  // - se existir receipt_parsed, usa direto (instantâneo)
-  // - "Reler" força OCR novo (ignora cache)
   async function parseReceiptForEdit(tx: Tx, force = false) {
     if (!tx.receipt_path) return setError('Sem comprovante anexado');
 
@@ -612,9 +627,7 @@ export default function TransactionsPage() {
           <div>
             Líquido (filtro): <span className="text-white/90 font-medium">{fmtBRL(totals.net_cents)}</span>
           </div>
-          <div className="text-xs text-white/50">
-            (Debug) Líquido da lista carregada: {fmtBRL(totalAllLoaded)}
-          </div>
+          <div className="text-xs text-white/50">(Debug) Líquido da lista carregada: {fmtBRL(totalAllLoaded)}</div>
         </div>
       </div>
 
@@ -632,11 +645,7 @@ export default function TransactionsPage() {
 
         <div className="md:col-span-4">
           <div className="text-xs text-white/60 mb-1">Conta</div>
-          <select
-            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
-            value={filterAccountId}
-            onChange={(e) => setFilterAccountId(e.target.value)}
-          >
+          <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)}>
             <option value="">(Todas)</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
@@ -648,11 +657,7 @@ export default function TransactionsPage() {
 
         <div className="md:col-span-4">
           <div className="text-xs text-white/60 mb-1">Categoria</div>
-          <select
-            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
-            value={filterCategoryId}
-            onChange={(e) => setFilterCategoryId(e.target.value)}
-          >
+          <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={filterCategoryId} onChange={(e) => setFilterCategoryId(e.target.value)}>
             <option value="">(Todas)</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
@@ -709,20 +714,10 @@ export default function TransactionsPage() {
           onChange={(e) => setDateStr(e.target.value)}
         />
 
-        <input
-          className="rounded border border-white/15 bg-black/20 p-3 md:col-span-2"
-          placeholder="Descrição"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
+        <input className="rounded border border-white/15 bg-black/20 p-3 md:col-span-2" placeholder="Descrição" value={description} onChange={(e) => setDescription(e.target.value)} />
 
         <div className="flex gap-2 md:col-span-2">
-          <input
-            className="w-full min-w-[180px] rounded border border-white/15 bg-black/20 p-3"
-            placeholder="Valor (ex: 19,90)"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
+          <input className="w-full min-w-[180px] rounded border border-white/15 bg-black/20 p-3" placeholder="Valor (ex: 19,90)" value={amount} onChange={(e) => setAmount(e.target.value)} />
           <button className="rounded bg-white px-4 text-black" disabled={busyId === 'ADD'}>
             Adicionar
           </button>
@@ -746,12 +741,7 @@ export default function TransactionsPage() {
             />
           </label>
 
-          <button
-            type="button"
-            onClick={() => void readReceiptForAdd()}
-            className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
-            disabled={busyId === 'ADD' || !addReceiptPath}
-          >
+          <button type="button" onClick={() => void readReceiptForAdd()} className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10" disabled={busyId === 'ADD' || !addReceiptPath}>
             {busyId === 'ADD' ? 'Lendo…' : 'Ler'}
           </button>
 
@@ -826,19 +816,9 @@ export default function TransactionsPage() {
               <div key={r.id} className="rounded border border-white/10 bg-white/5 p-4 space-y-3">
                 <div className="text-xs text-white/60">Editando</div>
 
-                <input
-                  type="date"
-                  className="w-full rounded border border-white/15 bg-black/20 p-3 pr-10 text-sm text-white font-medium tracking-wide"
-                  value={editDateStr}
-                  onChange={(e) => setEditDateStr(e.target.value)}
-                />
+                <input type="date" className="w-full rounded border border-white/15 bg-black/20 p-3 pr-10 text-sm text-white font-medium tracking-wide" value={editDateStr} onChange={(e) => setEditDateStr(e.target.value)} />
 
-                <input
-                  className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  placeholder="Descrição"
-                />
+                <input className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Descrição" />
 
                 <div className="flex gap-2">
                   <select
@@ -855,12 +835,7 @@ export default function TransactionsPage() {
                     <option value="income">Entrada</option>
                   </select>
 
-                  <input
-                    className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    placeholder="Valor (ex: 19,90)"
-                  />
+                  <input className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 19,90)" />
                 </div>
 
                 <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
@@ -884,11 +859,7 @@ export default function TransactionsPage() {
                 <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-2 text-[11px] text-[#D4AF37] space-y-1">
                   <div>COMPROVANTE: Anexar → Ler (OCR) → Salvar</div>
                   <div className="text-white/70">
-                    {!r.receipt_path
-                      ? 'Status: sem comprovante'
-                      : r.receipt_parsed_at
-                        ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}`
-                        : 'Status: comprovante anexado (não lido)'}
+                    {!r.receipt_path ? 'Status: sem comprovante' : r.receipt_parsed_at ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}` : 'Status: comprovante anexado (não lido)'}
                   </div>
                 </div>
 
@@ -908,12 +879,7 @@ export default function TransactionsPage() {
                     />
                   </label>
 
-                  <button
-                    type="button"
-                    onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)}
-                    className="rounded border border-white/15 bg-black/20 px-3 py-2 text-xs text-white/80 hover:bg-white/10"
-                    disabled={busy || !r.receipt_path}
-                  >
+                  <button type="button" onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)} className="rounded border border-white/15 bg-black/20 px-3 py-2 text-xs text-white/80 hover:bg-white/10" disabled={busy || !r.receipt_path}>
                     {busy ? 'Lendo…' : r.receipt_parsed_at ? 'Reler' : 'Ler'}
                   </button>
 
@@ -943,7 +909,7 @@ export default function TransactionsPage() {
                   <button onClick={cancelEdit} className="rounded border border-white/15 px-4 py-3 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
                     Cancelar
                   </button>
-                  <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
+                  <button onClick={() => removeTx(r.id)} className="rounded border border-red-500/40 px-4 py-3 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
                     Remover
                   </button>
                 </div>
@@ -953,12 +919,7 @@ export default function TransactionsPage() {
         )}
 
         {!loading && hasMore && (
-          <button
-            type="button"
-            onClick={() => void loadMore()}
-            disabled={loadingMore}
-            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60"
-          >
+          <button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60">
             {loadingMore ? 'Carregando…' : 'Carregar mais'}
           </button>
         )}
@@ -1014,32 +975,18 @@ export default function TransactionsPage() {
                 return (
                   <div key={r.id} className="grid grid-cols-13 gap-2 border-b border-white/5 bg-white/5 px-4 py-3">
                     <div className="col-span-2">
-                      <input
-                        type="date"
-                        className="w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide"
-                        value={editDateStr}
-                        onChange={(e) => setEditDateStr(e.target.value)}
-                      />
+                      <input type="date" className="w-full min-w-[160px] rounded border border-white/15 bg-black/20 p-2 pr-10 text-sm text-white font-medium tracking-wide" value={editDateStr} onChange={(e) => setEditDateStr(e.target.value)} />
                     </div>
 
                     <div className="col-span-4 space-y-2">
                       <div className="rounded border border-[#D4AF37]/30 bg-[#D4AF37]/10 px-2 py-1 text-[11px] text-[#D4AF37] space-y-1">
                         <div>COMPROVANTE (edição): Anexar → Ler (OCR) → Salvar</div>
                         <div className="text-white/70">
-                          {!r.receipt_path
-                            ? 'Status: sem comprovante'
-                            : r.receipt_parsed_at
-                              ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}`
-                              : 'Status: comprovante anexado (não lido)'}
+                          {!r.receipt_path ? 'Status: sem comprovante' : r.receipt_parsed_at ? `Status: OCR feito em ${fmtBRDateTime(r.receipt_parsed_at)}` : 'Status: comprovante anexado (não lido)'}
                         </div>
                       </div>
 
-                      <input
-                        className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
-                        value={editDescription}
-                        onChange={(e) => setEditDescription(e.target.value)}
-                        placeholder="Descrição"
-                      />
+                      <input className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Descrição" />
 
                       <div className="flex gap-2">
                         <select
@@ -1056,12 +1003,7 @@ export default function TransactionsPage() {
                           <option value="income">Entrada</option>
                         </select>
 
-                        <input
-                          className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm"
-                          value={editAmount}
-                          onChange={(e) => setEditAmount(e.target.value)}
-                          placeholder="Valor (ex: 19,90)"
-                        />
+                        <input className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 19,90)" />
                       </div>
 
                       <div className="flex flex-wrap gap-2 pt-1">
@@ -1080,12 +1022,7 @@ export default function TransactionsPage() {
                           />
                         </label>
 
-                        <button
-                          type="button"
-                          onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)}
-                          className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
-                          disabled={busy || !r.receipt_path}
-                        >
+                        <button type="button" onClick={() => void parseReceiptForEdit(r, !!r.receipt_parsed_at)} className="rounded border border-white/15 bg-black/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10" disabled={busy || !r.receipt_path}>
                           {busy ? 'Lendo…' : r.receipt_parsed_at ? 'Reler' : 'Ler'}
                         </button>
 
@@ -1135,7 +1072,7 @@ export default function TransactionsPage() {
                       <button onClick={() => void saveEdit(r.id)} className="rounded bg-white px-3 py-2 text-xs font-medium text-black" type="button" disabled={busy}>
                         Salvar
                       </button>
-                      <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
+                      <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py--2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
                         Cancelar
                       </button>
                       <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
@@ -1149,12 +1086,7 @@ export default function TransactionsPage() {
 
             {!loading && hasMore && (
               <div className="p-4">
-                <button
-                  type="button"
-                  onClick={() => void loadMore()}
-                  disabled={loadingMore}
-                  className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60"
-                >
+                <button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60">
                   {loadingMore ? 'Carregando…' : 'Carregar mais'}
                 </button>
               </div>
