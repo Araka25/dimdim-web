@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
 type Account = { id: string; name: string };
-
 type Totals = { income_cents: number; expense_cents: number; net_cents: number };
 
 type ByMonthRow = {
@@ -49,18 +48,12 @@ export default function YearlyReportsPage() {
 
   const [byMonth, setByMonth] = useState<ByMonthRow[]>([]);
   const [totals, setTotals] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
-TypeScript
-
-
-const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: number }>>([]);
+
+  const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: number }>>([]);
   const [topIncome, setTopIncome] = useState<Array<{ name: string; total_cents: number }>>([]);
 
   const maxBar = useMemo(() => {
-    const max = Math.max(
-      1,
-      ...byMonth.map((r) => Math.max(r.income_cents, r.expense_cents))
-    );
-    return max;
+    return Math.max(1, ...byMonth.map((r) => Math.max(r.income_cents, r.expense_cents)));
   }, [byMonth]);
 
   async function getUserIdOrError(client: any) {
@@ -79,7 +72,6 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
       const supabase = supabaseBrowser();
       const userId = await getUserIdOrError(supabase);
 
-      // lookups (accounts + categories)
       const [a, c] = await Promise.all([
         supabase.from('accounts').select('id,name').order('created_at', { ascending: false }),
         supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
@@ -96,25 +88,25 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
       const searchTrim = search.trim() || null;
       const { startIso, endIso } = yearRangeUTC(year);
 
-      // 1) by month (RPC nova)
+      // resumo por mês (RPC)
       const bm = await supabase.rpc('transactions_yearly_by_month', {
         p_user_id: userId,
         p_year: year,
         p_account_id: accountId || null,
         p_search: searchTrim,
       });
-      if (bm.error) throw new Error(bm.error.message);
 
-      const bmRows = ((bm.data as any[]) || []).map((r) => ({
+      if (bm.error) throw new Error(bm.error.message);
+      const bmRows: ByMonthRow[] = ((bm.data as any[]) || []).map((r) => ({
         month: Number(r.month),
         income_cents: Number(r.income_cents ?? 0),
         expense_cents: Number(r.expense_cents ?? 0),
         net_cents: Number(r.net_cents ?? 0),
-      })) as ByMonthRow[];
+      }));
 
       setByMonth(bmRows);
 
-      // totals do ano (somando os meses)
+      // totais do ano (somando os meses)
       const t = bmRows.reduce(
         (acc, r) => ({
           income_cents: acc.income_cents + r.income_cents,
@@ -125,7 +117,7 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
       );
       setTotals(t);
 
-      // 2) top categories do ano (reutiliza RPC existente)
+      // top categorias do ano (reutiliza RPC existente)
       const catMap = new Map(categoriesData.map((x) => [x.id, x.name]));
 
       const [topExp, topInc] = await Promise.all([
@@ -169,7 +161,8 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
       setError(e?.message ? String(e.message) : String(e));
       setByMonth([]);
       setTopExpense([]);
-      setTopIncome([]);setTotals({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+      setTopIncome([]);
+      setTotals({ income_cents: 0, expense_cents: 0, net_cents: 0 });
     } finally {
       setLoading(false);
     }
@@ -178,7 +171,8 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, accountId, search]);return(
+  }, [year, accountId, search]);
+  return(
     <section className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
@@ -202,7 +196,6 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
         </div>
       </div>
 
-      {/* Filtros */}
       <div className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-12">
         <div className="md:col-span-2">
           <div className="text-xs text-white/60 mb-1">Ano</div>
@@ -243,7 +236,6 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
 
       {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
-      {/* Gráfico */}
       <div className="rounded-lg border border-white/10 bg-white/5 p-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Entradas x Saídas (por mês)</div>
@@ -266,7 +258,9 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
                   />
                   <div
                     className="w-1/2 rounded bg-red-400/70"
-                    style={{ height: `${Math.max(2, Math.round((r.expense_cents / maxBar) * 100))}%` }}title={`Saídas: ${fmtBRL(r.expense_cents)}`}
+                    style={{ height: `${Math.max(2, Math.round((r.expense_cents / maxBar) * 100))}%` }}
+                    title={`Saídas: ${fmtBRL(r.expense_cents)}`
+                    }
                   />
                 </div>
                 <div className="mt-1 text-center text-[11px] text-white/60">{monthLabel(r.month)}</div>
@@ -287,7 +281,6 @@ const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: 
         </div>
       </div>
 
-      {/* Top categorias do ano */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between">
