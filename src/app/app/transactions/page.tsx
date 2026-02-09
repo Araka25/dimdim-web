@@ -5,6 +5,7 @@ import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
 type Account = { id: string; name: string };
 type Category = { id: string; name: string; kind: 'income' | 'expense' };
+type KindFilter = '' | 'income' | 'expense';
 
 type ParsedReceipt = {
   merchant: string | null;
@@ -71,6 +72,16 @@ function monthRangeUTC(yyyyMM: string) {
   return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
+function addMonthsYYYYMM(yyyyMM: string, deltaMonths: number) {
+  const [yStr, mStr] = yyyyMM.split('-');
+  const y = Number(yStr);
+  const m = Number(mStr); // 1-12
+  const d = new Date(Date.UTC(y, m - 1 + deltaMonths, 1));
+  const yy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${yy}-${mm}`;
+}
+
 function getExt(file: File) {
   const byName = file.name.split('.').pop()?.toLowerCase();
   if (byName && byName.length <= 5) return byName;
@@ -100,6 +111,20 @@ function fmtBRDateTime(iso: string) {
   });
 }
 
+// Aceita: "1000,00" | "1.000,00" | "1 000,00" | "R$ 1.000,00"
+function brlToCents(input: string) {
+  const s = String(input || '')
+    .trim()
+    .replace(/\s/g, '')
+    .replace(/^R\$\s?/i, '')
+    .replace(/\./g, '')
+    .replace(',', '.');
+
+  const n = Number(s);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.round(n * 100);
+}
+
 export default function TransactionsPage() {
   const [txs, setTxs] = useState<Tx[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -118,6 +143,8 @@ export default function TransactionsPage() {
   const [filterMonth, setFilterMonth] = useState<string>(() => currentYYYYMM()); // "YYYY-MM"
   const [filterAccountId, setFilterAccountId] = useState<string>(''); // '' = todos
   const [filterCategoryId, setFilterCategoryId] = useState<string>(''); // '' = todos
+  const [filterKind, setFilterKind] = useState<KindFilter>(''); // '' = todos
+  const [filterSearch, setFilterSearch] = useState<string>(''); // texto livre
 
   // Totals do período (server-side via RPC)
   const [totals, setTotals] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
@@ -144,10 +171,6 @@ export default function TransactionsPage() {
 
   const filteredCategories = useMemo(() => categories.filter((c) => c.kind === kind), [categories, kind]);
   const filteredEditCategories = useMemo(() => categories.filter((c) => c.kind === editKind), [categories, editKind]);
-
-  const totalAllLoaded = useMemo(() => {
-    return txs.reduce((acc, r) => acc + (r.kind === 'income' ? r.amount_cents : -r.amount_cents), 0);
-  }, [txs]);
 
   const lastLoadKeyRef = useRef<string>('');
 
@@ -196,7 +219,7 @@ export default function TransactionsPage() {
   }
 
   function makeLoadKey() {
-    return `${filterMonth}|${filterAccountId || '-'}|${filterCategoryId || '-'}`;
+    return `${filterMonth}|${filterAccountId || '-'}|${filterCategoryId || '-'}|${filterKind || '-'}|${filterSearch.trim() || '-'}`;
   }
 
   async function loadLookups() {
@@ -222,12 +245,16 @@ export default function TransactionsPage() {
     const userId = await getUserIdOrError(supabase);
     const { startIso, endIso } = monthRangeUTC(filterMonth);
 
+    const search = filterSearch.trim() || null;
+
     const { data, error } = await supabase.rpc('transactions_totals', {
       p_user_id: userId,
       p_start: startIso,
       p_end: endIso,
       p_account_id: filterAccountId || null,
       p_category_id: filterCategoryId || null,
+      p_kind: filterKind || null,
+      p_search: search,
     });
 
     if (error) throw new Error(error.message);
@@ -277,6 +304,8 @@ export default function TransactionsPage() {
 
       if (filterAccountId) q = q.eq('account_id', filterAccountId);
       if (filterCategoryId) q = q.eq('category_id', filterCategoryId);
+      if (filterKind) q = q.eq('kind', filterKind);
+      if (filterSearch.trim()) q = q.ilike('description', `%${filterSearch.trim()}%`);
 
       const { data, error } = await q;
       if (error) throw new Error(error.message);
@@ -334,6 +363,8 @@ export default function TransactionsPage() {
 
       if (filterAccountId) q = q.eq('account_id', filterAccountId);
       if (filterCategoryId) q = q.eq('category_id', filterCategoryId);
+      if (filterKind) q = q.eq('kind', filterKind);
+      if (filterSearch.trim()) q = q.ilike('description', `%${filterSearch.trim()}%`);
 
       const { data, error } = await q;
       if (error) throw new Error(error.message);
@@ -363,7 +394,7 @@ export default function TransactionsPage() {
   useEffect(() => {
     void loadFirstPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterMonth, filterAccountId, filterCategoryId]);
+  }, [filterMonth, filterAccountId, filterCategoryId, filterKind, filterSearch]);
 
   function startEdit(tx: Tx) {
     setError(null);
@@ -437,7 +468,7 @@ export default function TransactionsPage() {
     e.preventDefault();
     setError(null);
 
-    const cents = Math.round(Number(amount.replace(',', '.')) * 100);
+    const cents = brlToCents(amount);
     if (!dateStr) return setError('Data obrigatória');
     if (!description.trim()) return setError('Descrição obrigatória');
     if (!Number.isFinite(cents) || cents <= 0) return setError('Valor inválido');
@@ -481,7 +512,6 @@ export default function TransactionsPage() {
       setDescription('');
       setAmount('');
 
-      await loadTotals();
       await loadFirstPage();
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
@@ -491,7 +521,7 @@ export default function TransactionsPage() {
   async function saveEdit(id: string) {
     setError(null);
 
-    const cents = Math.round(Number(editAmount.replace(',', '.')) * 100);
+    const cents = brlToCents(editAmount);
     if (!editDateStr) return setError('Data obrigatória');
     if (!editDescription.trim()) return setError('Descrição obrigatória');
     if (!Number.isFinite(cents) || cents <= 0) return setError('Valor inválido');
@@ -517,7 +547,6 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
 
     setEditingId(null);
-    await loadTotals();
     await loadFirstPage();
   }
 
@@ -529,8 +558,6 @@ export default function TransactionsPage() {
     if (error) return setError(error.message);
 
     if (editingId === id) setEditingId(null);
-
-    await loadTotals();
     await loadFirstPage();
   }
 
@@ -611,41 +638,81 @@ export default function TransactionsPage() {
 
   return (
     <section className="space-y-6">
+      {/* HEADER + DASHBOARD (5) */}
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Transações</h1>
           <p className="text-sm text-white/60">Lançamentos de entrada/saída</p>
         </div>
 
-        <div className="text-sm text-white/70 space-y-1 md:text-right">
-          <div>
-            Total entradas (filtro): <span className="text-emerald-300 font-medium">{fmtBRL(totals.income_cents)}</span>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full md:w-auto">
+          <div className="rounded border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-white/60">Entradas (filtro)</div>
+            <div className="text-emerald-300 font-semibold">{fmtBRL(totals.income_cents)}</div>
           </div>
-          <div>
-            Total saídas (filtro): <span className="text-red-300 font-medium">{fmtBRL(totals.expense_cents)}</span>
+          <div className="rounded border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-white/60">Saídas (filtro)</div>
+            <div className="text-red-300 font-semibold">{fmtBRL(totals.expense_cents)}</div>
           </div>
-          <div>
-            Líquido (filtro): <span className="text-white/90 font-medium">{fmtBRL(totals.net_cents)}</span>
+          <div className="rounded border border-white/10 bg-white/5 p-3">
+            <div className="text-xs text-white/60">Líquido (filtro)</div>
+            <div className="text-white/90 font-semibold">{fmtBRL(totals.net_cents)}</div>
           </div>
-          <div className="text-xs text-white/50">(Debug) Líquido da lista carregada: {fmtBRL(totalAllLoaded)}</div>
         </div>
       </div>
 
-      {/* FILTROS */}
+      {/* FILTROS (1,2,3) */}
       <div className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-12">
         <div className="md:col-span-3">
           <div className="text-xs text-white/60 mb-1">Mês</div>
-          <input
-            type="month"
-            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
-            value={filterMonth}
-            onChange={(e) => setFilterMonth(e.target.value)}
-          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="rounded border border-white/15 bg-black/20 px-3 py-2 text-sm text-white/80 hover:bg-white/10"
+              onClick={() => setFilterMonth((m) => addMonthsYYYYMM(m, -1))}
+              title="Mês anterior"
+            >
+              ←
+            </button>
+
+            <input
+              type="month"
+              className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+            />
+
+            <button
+              type="button"
+              className="rounded border border-white/15 bg-black/20 px-3 py-2 text-sm text-white/80 hover:bg-white/10"
+              onClick={() => setFilterMonth((m) => addMonthsYYYYMM(m, 1))}
+              title="Próximo mês"
+            >
+              →
+            </button>
+          </div>
         </div>
 
-        <div className="md:col-span-4">
+        <div className="md:col-span-3">
+          <div className="text-xs text-white/60 mb-1">Tipo</div>
+          <select
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={filterKind}
+            onChange={(e) => setFilterKind(e.target.value as KindFilter)}
+          >
+            <option value="">(Todos)</option>
+            <option value="income">Entrada</option>
+            <option value="expense">Saída</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-3">
           <div className="text-xs text-white/60 mb-1">Conta</div>
-          <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)}>
+          <select
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={filterAccountId}
+            onChange={(e) => setFilterAccountId(e.target.value)}
+          >
             <option value="">(Todas)</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
@@ -655,9 +722,13 @@ export default function TransactionsPage() {
           </select>
         </div>
 
-        <div className="md:col-span-4">
+        <div className="md:col-span-2">
           <div className="text-xs text-white/60 mb-1">Categoria</div>
-          <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={filterCategoryId} onChange={(e) => setFilterCategoryId(e.target.value)}>
+          <select
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={filterCategoryId}
+            onChange={(e) => setFilterCategoryId(e.target.value)}
+          >
             <option value="">(Todas)</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
@@ -675,10 +746,22 @@ export default function TransactionsPage() {
               setFilterMonth(currentYYYYMM());
               setFilterAccountId('');
               setFilterCategoryId('');
+              setFilterKind('');
+              setFilterSearch('');
             }}
           >
             Limpar
           </button>
+        </div>
+
+        <div className="md:col-span-12">
+          <div className="text-xs text-white/60 mb-1">Buscar (descrição)</div>
+          <input
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={filterSearch}
+            onChange={(e) => setFilterSearch(e.target.value)}
+            placeholder="ex: mercado, uber, aluguel..."
+          />
         </div>
       </div>
 
@@ -717,7 +800,12 @@ export default function TransactionsPage() {
         <input className="rounded border border-white/15 bg-black/20 p-3 md:col-span-2" placeholder="Descrição" value={description} onChange={(e) => setDescription(e.target.value)} />
 
         <div className="flex gap-2 md:col-span-2">
-          <input className="w-full min-w-[180px] rounded border border-white/15 bg-black/20 p-3" placeholder="Valor (ex: 19,90)" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input
+            className="w-full min-w-[180px] rounded border border-white/15 bg-black/20 p-3"
+            placeholder="Valor (ex: 1.000,00)"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
           <button className="rounded bg-white px-4 text-black" disabled={busyId === 'ADD'}>
             Adicionar
           </button>
@@ -835,7 +923,7 @@ export default function TransactionsPage() {
                     <option value="income">Entrada</option>
                   </select>
 
-                  <input className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 19,90)" />
+                  <input className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 1.000,00)" />
                 </div>
 
                 <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
@@ -925,7 +1013,7 @@ export default function TransactionsPage() {
         )}
       </div>
 
-      {/* DESKTOP: tabela */}
+      {/* DESKTOP: tabela (mantive simples; edição continua inline) */}
       <div className="hidden md:block rounded border border-white/10">
         <div className="overflow-x-auto">
           <div className="min-w-[900px] overflow-hidden">
@@ -1003,7 +1091,7 @@ export default function TransactionsPage() {
                           <option value="income">Entrada</option>
                         </select>
 
-                        <input className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 19,90)" />
+                        <input className="w-full rounded border border-white/15 bg-black/20 p-2 text-sm" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} placeholder="Valor (ex: 1.000,00)" />
                       </div>
 
                       <div className="flex flex-wrap gap-2 pt-1">
@@ -1072,10 +1160,10 @@ export default function TransactionsPage() {
                       <button onClick={() => void saveEdit(r.id)} className="rounded bg-white px-3 py-2 text-xs font-medium text-black" type="button" disabled={busy}>
                         Salvar
                       </button>
-                      <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py--2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
+                      <button onClick={cancelEdit} className="rounded border border-white/15 px-3 py-2 text-xs text-white/80 hover:bg-white/10" type="button" disabled={busy}>
                         Cancelar
                       </button>
-                      <button onClick={() => void removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
+                      <button onClick={() => removeTx(r.id)} className="rounded border border-red-500/40 px-3 py-2 text-xs text-red-200 hover:bg-red-500/10" type="button" disabled={busy}>
                         Remover
                       </button>
                     </div>
