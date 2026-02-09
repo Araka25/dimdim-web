@@ -1,255 +1,307 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { useEffect, useMemo, useState } from 'react';
+import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
-const MonthlyCharts = dynamic(
-  () => import("@/components/MonthlyCharts").then((m) => m.default),
-  { ssr: false }
-);
+type Account = { id: string; name: string };
+type Category = { id: string; name: string; kind: 'income' | 'expense' };
+type KindFilter = '' | 'income' | 'expense';
 
-type Tx = {
-  occurred_at: string;
-  kind: "income" | "expense";
-  amount_cents: number;
-  category_id: string | null;
-};
+type Totals = { income_cents: number; expense_cents: number; net_cents: number };
+type TopCatRow = { category_id: string; total_cents: number };
+type TopCatUi = { id: string; name: string; total_cents: number };
 
-type Category = { id: string; name: string };
+function fmtBRL(cents: number) {
+  return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
 
-type Budget = {
-  category_id: string;
-  limit_cents: number;
-  month_date: string; // YYYY-MM-01
-};
+function currentYYYYMM() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+}
+
+function monthRangeUTC(yyyyMM: string) {
+  const [yStr, mStr] = yyyyMM.split('-');
+  const y = Number(yStr);
+  const m = Number(mStr); // 1-12
+  const start = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0));
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
 
 export default function MonthlyReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [month, setMonth] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
-
-  const [txs, setTxs] = useState<Tx[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [budgets, setBudgets] = useState<Budget[]>([]);
 
-  const budgetSectionRef = useRef<HTMLDivElement | null>(null);
+  const [month, setMonth] = useState<string>(() => currentYYYYMM());
+  const [accountId, setAccountId] = useState<string>('');
+  const [kind, setKind] = useState<KindFilter>('');
+  const [search, setSearch] = useState<string>('');
 
-  const monthDate = useMemo(() => `${month}-01`, [month]);
+  const [totals, setTotals] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+  const [topExpenseCats, setTopExpenseCats] = useState<TopCatUi[]>([]);
+  const [topIncomeCats, setTopIncomeCats] = useState<TopCatUi[]>([]);
 
-  const startEnd = useMemo(() => {
-    const [y, m] = month.split("-").map(Number);
-    const start = new Date(y, m - 1, 1, 0, 0, 0, 0);
-    const end = new Date(y, m, 1, 0, 0, 0, 0);
-    return { start, end };
-  }, [month]);
+  const maxTopExpense = useMemo(() => Math.max(1, ...topExpenseCats.map((x) => x.total_cents)), [topExpenseCats]);
+  const maxTopIncome = useMemo(() => Math.max(1, ...topIncomeCats.map((x) => x.total_cents)), [topIncomeCats]);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError(null);
+  async function getUserIdOrError(client: any) {
+    const { data, error } = await client.auth.getUser();
+    if (error) throw new Error(error.message);
+    const uid = data.user?.id;
+    if (!uid) throw new Error('Sessão expirada. Faça login novamente.');
+    return uid;
+  }
 
+  async function loadAll() {
+    setLoading(true);
+    setError(null);
+
+    try {
       const supabase = supabaseBrowser();
+      const userId = await getUserIdOrError(supabase);
 
-      const [catsRes, txRes, budRes] = await Promise.all([
-        supabase.from("categories").select("id,name"),
-        supabase
-          .from("transactions")
-          .select("occurred_at,kind,amount_cents,category_id")
-          .gte("occurred_at", startEnd.start.toISOString())
-          .lt("occurred_at", startEnd.end.toISOString()),
-        supabase
-          .from("budgets")
-          .select("category_id,limit_cents,month_date")
-          .eq("month_date", monthDate),
+      // lookups
+      const [a, c] = await Promise.all([
+        supabase.from('accounts').select('id,name').order('created_at', { ascending: false }),
+        supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
       ]);
 
-      if (catsRes.error) setError(catsRes.error.message);
-      if (txRes.error) setError(txRes.error.message);
-      if (budRes.error) setError(budRes.error.message);
+      if (a.error) throw new Error(a.error.message);
+      if (c.error) throw new Error(c.error.message);
 
-      setCategories((catsRes.data as Category[]) || []);
-      setTxs((txRes.data as Tx[]) || []);
-      setBudgets((budRes.data as Budget[]) || []);
+      const accountsData = (a.data as Account[]) || [];
+      const categoriesData = (c.data as Category[]) || [];
+      setAccounts(accountsData);
+      setCategories(categoriesData);
+
+      const { startIso, endIso } = monthRangeUTC(month);
+      const searchTrim = search.trim() || null;
+
+      // totals via RPC
+      const totalsRes = await supabase.rpc('transactions_totals', {
+        p_user_id: userId,
+        p_start: startIso,
+        p_end: endIso,
+        p_account_id: accountId || null,
+        p_category_id: null,
+        p_kind: kind || null,
+        p_search: searchTrim,
+      });
+
+      if (totalsRes.error) throw new Error(totalsRes.error.message);
+
+      const trow = Array.isArray(totalsRes.data) ? totalsRes.data[0] : totalsRes.data;
+      setTotals({
+        income_cents: Number(trow?.income_cents ?? 0),
+        expense_cents: Number(trow?.expense_cents ?? 0),
+        net_cents: Number(trow?.net_cents ?? 0),
+      });
+
+      // top categories (income/expense)
+      const catMap = new Map(categoriesData.map((x) => [x.id, x.name]));
+
+      const [topExp, topInc] = await Promise.all([
+        supabase.rpc('transactions_top_categories', {
+          p_user_id: userId,
+          p_start: startIso,
+          p_end: endIso,
+          p_account_id: accountId || null,
+          p_kind: 'expense',
+          p_search: searchTrim,
+          p_limit: 8,
+        }),
+        supabase.rpc('transactions_top_categories', {
+          p_user_id: userId,
+          p_start: startIso,
+          p_end: endIso,
+          p_account_id: accountId || null,
+          p_kind: 'income',
+          p_search: searchTrim,
+          p_limit: 8,
+        }),
+      ]);
+
+      if (topExp.error) throw new Error(topExp.error.message);
+      if (topInc.error) throw new Error(topInc.error.message);
+
+      setTopExpenseCats(
+        (((topExp.data as TopCatRow[]) || [])).map((r) => ({
+          id: r.category_id,
+          name: catMap.get(r.category_id) || 'Sem categoria',
+          total_cents: Number(r.total_cents ?? 0),
+        }))
+      );
+
+      setTopIncomeCats(
+        (((topInc.data as TopCatRow[]) || [])).map((r) => ({
+          id: r.category_id,
+          name: catMap.get(r.category_id) || 'Sem categoria',
+          total_cents: Number(r.total_cents ?? 0),
+        }))
+      );
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+      setTotals({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+      setTopExpenseCats([]);
+      setTopIncomeCats([]);
+    } finally {
       setLoading(false);
-    })();
-  }, [month, monthDate, startEnd.start, startEnd.end]);
-
-  const income = useMemo(
-    () => txs.filter((t) => t.kind === "income").reduce((a, t) => a + (t.amount_cents || 0), 0),
-    [txs]
-  );
-  const expense = useMemo(
-    () => txs.filter((t) => t.kind === "expense").reduce((a, t) => a + (t.amount_cents || 0), 0),
-    [txs]
-  );
-  const balance = income - expense;
-
-  const savingsRate = useMemo(() => {
-    if (income <= 0) return null;
-    return (balance / income) * 100;
-  }, [income, balance]);
-
-  const expenseByCategory = useMemo(() => {
-    const nameById = new Map(categories.map((c) => [c.id, c.name]));
-    const map = new Map<string, number>();
-
-    for (const t of txs) {
-      if (t.kind !== "expense") continue;
-      const key = t.category_id ? nameById.get(t.category_id) ?? "Sem categoria" : "Sem categoria";
-      map.set(key, (map.get(key) || 0) + (t.amount_cents || 0));
     }
+  }
 
-    return Array.from(map.entries())
-      .map(([name, cents]) => ({ name, value: cents / 100 }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10);
-  }, [txs, categories]);
-  const dailyBalance = useMemo(() => {
-    const daysInMonth = new Date(startEnd.end.getTime() - 1).getDate();
-    const byDay = Array.from({ length: daysInMonth }, (_, i) => ({ day: i + 1, delta: 0 }));
+  useEffect(() => {
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, accountId, kind, search]);
 
-    for (const t of txs) {
-      const d = new Date(t.occurred_at);
-      const day = d.getDate();
-      const sign = t.kind === "income" ? 1 : -1;
-      if (day >= 1 && day <= daysInMonth) byDay[day - 1].delta += sign * (t.amount_cents || 0);
-    }
-
-    let acc = 0;
-    return byDay.map((x) => {
-      acc += x.delta;
-      return { day: x.day, saldo: acc / 100 };
-    });
-  }, [txs, startEnd.end]);
-
-  const budgetChart = useMemo(() => {
-    const nameById = new Map(categories.map((c) => [c.id, c.name]));
-    const limitByCat = new Map(budgets.map((b) => [b.category_id, b.limit_cents]));
-
-    const spentByCat = new Map<string, number>();
-    for (const t of txs) {
-      if (t.kind !== "expense") continue;
-      if (!t.category_id) continue;
-      if (!limitByCat.has(t.category_id)) continue;
-      spentByCat.set(t.category_id, (spentByCat.get(t.category_id) || 0) + (t.amount_cents || 0));
-    }
-
-    return Array.from(limitByCat.entries())
-      .map(([category_id, limit_cents]) => {
-        const spent = spentByCat.get(category_id) || 0;
-        const pct = limit_cents > 0 ? (spent / limit_cents) * 100 : 0;
-        return {
-          name: nameById.get(category_id) || "Categoria",
-          gasto: spent / 100,
-          limite: limit_cents / 100,
-          pct,
-        };
-      })
-      .sort((a, b) => b.gasto - a.gasto);
-  }, [categories, budgets, txs]);
-
-  const budgetStats = useMemo(() => {
-    const over = budgetChart.filter((b) => b.pct >= 100).length;
-    const near = budgetChart.filter((b) => b.pct >= 80 && b.pct < 100).length;
-    const ok = budgetChart.filter((b) => b.pct < 80).length;
-    return { over, near, ok };
-  }, [budgetChart]);
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Relatório Mensal</h1>
-          <p className="text-sm text-white/60">Resumo + gráficos do mês selecionado</p>
+          <h1 className="text-2xl font-semibold">Relatórios (Mês)</h1>
+          <p className="text-sm text-white/60">Resumo do mês filtrado</p>
         </div>
 
-        <div className="flex flex-wrap items-end gap-3">
-          {!loading && budgetChart.length > 0 && (
-            <button
-              type="button"
-              onClick={() => budgetSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-              className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 hover:bg-white/10"
-              title="Ver detalhes do orçamento"
-            >
-              <span className="text-red-400">{budgetStats.over} estourados</span>
-              {" · "}
-              <span className="text-yellow-400">{budgetStats.near} em 80%+</span>
-              {" · "}
-              <span className="text-green-400">{budgetStats.ok} ok</span>
-            </button>
-          )}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="text-xs text-white/60">Entradas</div>
+            <div className="mt-1 text-lg font-semibold text-emerald-300">{fmtBRL(totals.income_cents)}</div>
+          </div>
 
-          <label className="text-sm text-white/70">
-            Mês:{" "}
-            <input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className="ml-2 rounded border border-white/15 bg-black/20 p-2"
-            />
-          </label>
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="text-xs text-white/60">Saídas</div>
+            <div className="mt-1 text-lg font-semibold text-red-300">{fmtBRL(totals.expense_cents)}</div>
+          </div>
+
+          <div className="col-span-2 sm:col-span-1 rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="text-xs text-white/60">Líquido</div>
+            <div className="mt-1 text-lg font-semibold text-white/90">{fmtBRL(totals.net_cents)}</div>
+          </div>
         </div>
       </div>
 
-      {error && (
-        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>
-      )}
-
-      <div className="grid gap-3 md:grid-cols-4">
-        <Card title="Entradas">{fmtBRL(income)}</Card>
-        <Card title="Saídas">{fmtBRL(expense)}</Card>
-
-        <div className="rounded border border-white/10 bg-white/5 p-4">
-          <div className="text-xs text-white/60">Saldo</div>
-          <div className={"mt-2 text-xl font-semibold " + (balance >= 0 ? "text-green-400" : "text-red-400")}>
-            {fmtBRL(balance)}
-          </div>
+      {/* filtros */}
+      <div className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-12">
+        <div className="md:col-span-3">
+          <div className="text-xs text-white/60 mb-1">Mês</div>
+          <input
+            type="month"
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+          />
         </div>
 
-        <div className="rounded border border-white/10 bg-white/5 p-4">
-          <div className="text-xs text-white/60">Taxa de poupança</div>
-          <div
-            className={
-              "mt-2 text-xl font-semibold " +
-              (savingsRate === null ? "text-white" : savingsRate >= 0 ? "text-green-400" : "text-red-400")
-            }
+        <div className="md:col-span-3">
+          <div className="text-xs text-white/60 mb-1">Tipo</div>
+          <select
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={kind}
+            onChange={(e) => setKind(e.target.value as KindFilter)}
           >
-            {fmtPercent(savingsRate)}
-          </div>
+            <option value="">(Todos)</option>
+            <option value="income">Entrada</option>
+            <option value="expense">Saída</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-3">
+          <div className="text-xs text-white/60 mb-1">Conta</div>
+          <select
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+          >
+            <option value="">(Todas)</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-3">
+          <div className="text-xs text-white/60 mb-1">Buscar (descrição)</div>
+          <input
+            className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="ex: mercado, uber, aluguel..."
+          />
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-sm text-white/60">Carregando…</div>
-      ) : (
-        <>
-          <div ref={budgetSectionRef} />
-          <MonthlyCharts expenseByCategory={expenseByCategory} dailyBalance={dailyBalance} budgetChart={budgetChart} />
-        </>
-      )}
+      {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
+
+      {/* top categorias */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium">Top categorias (Saídas)</div>
+            <div className="text-xs text-white/50">mês filtrado</div>
+          </div>
+
+          {loading ? (
+            <div className="mt-3 text-sm text-white/60">Carregando…</div>
+          ) : topExpenseCats.length === 0 ? (
+            <div className="mt-3 text-sm text-white/60">Sem dados.</div>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {topExpenseCats.map((c) => (
+                <div key={c.id} className="space-y-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <div className="text-sm text-white/80 truncate">{c.name}</div>
+                    <div className="text-sm text-red-200">{fmtBRL(c.total_cents)}</div>
+                  </div>
+                  <div className="h-2 rounded bg-white/10 overflow-hidden">
+                    <div
+                      className="h-2 rounded bg-red-400/60"
+                      style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopExpense) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium">Top categorias (Entradas)</div>
+            <div className="text-xs text-white/50">mês filtrado</div>
+          </div>
+
+          {loading ? (
+            <div className="mt-3 text-sm text-white/60">Carregando…</div>
+          ) : topIncomeCats.length === 0 ? (
+            <div className="mt-3 text-sm text-white/60">Sem dados.</div>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {topIncomeCats.map((c) => (
+                <div key={c.id} className="space-y-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <div className="text-sm text-white/80 truncate">{c.name}</div>
+                    <div className="text-sm text-emerald-200">{fmtBRL(c.total_cents)}</div>
+                  </div>
+                  <div className="h-2 rounded bg-white/10 overflow-hidden">
+                    <div
+                      className="h-2 rounded bg-emerald-400/60"
+                      style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopIncome) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded border border-white/10 bg-white/5 p-4">
-      <div className="text-xs text-white/60">{title}</div>
-      <div className="mt-2 text-xl font-semibold">{children}</div>
-    </div>
-  );
-}
-
-function fmtBRL(cents: number) {
-  const value = cents / 100;
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-function fmtPercent(v: number | null) {
-  if (v === null) return "—";
-  return v.toFixed(1) + "%";
 }
