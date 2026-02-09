@@ -8,7 +8,9 @@ const nav = [
   { href: '/app/dashboard', label: 'Painel' },
   { href: '/app/transactions', label: 'Transações' },
   { href: '/app/accounts', label: 'Contas' },
-  { href: '/app/categories', label: 'Categorias' },
+  { href: '/app/categories', label: 'Categorias' }, 
+  {href: '/app/reports/month', label: 'Relatórios (Mês)' },
+  { href: '/app/reports/year', label: 'Relatórios (Ano)' },
 ];
 
 function isActive(pathname: string, href: string) {
