@@ -158,9 +158,7 @@ export default function MonthlyReportsPage() {
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, accountId, kind, search]);
-
-  return (
+  }, [month, accountId, kind, search]);return(
     <section className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
