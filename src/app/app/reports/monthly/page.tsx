@@ -2,13 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
-import {
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-} from 'recharts';
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 
 type Account = { id: string; name: string };
 type Category = { id: string; name: string; kind: 'income' | 'expense' };
@@ -17,6 +11,15 @@ type KindFilter = '' | 'income' | 'expense';
 type Totals = { income_cents: number; expense_cents: number; net_cents: number };
 type TopCatRow = { category_id: string; total_cents: number };
 type TopCatUi = { id: string; name: string; total_cents: number };
+
+type PieDatum = {
+  id: string; // category_id or 'other'
+  name: string;
+  total_cents: number;
+  value: number;
+  kind: 'income' | 'expense';
+  isOther?: boolean;
+};
 
 function fmtBRL(cents: number) {
   return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -32,19 +35,21 @@ function currentYYYYMM() {
 function monthRangeUTC(yyyyMM: string) {
   const [yStr, mStr] = yyyyMM.split('-');
   const y = Number(yStr);
-  const m = Number(mStr); // 1-12
+  const m = Number(mStr);
   const start = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0, 0));
   const end = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0));
   return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
-const COLORS_EXPENSE = ['#f87171', '#fb7185', '#fda4af', '#fecdd3', '#ef4444', '#f97316', '#f59e0b', '#eab308'];
-const COLORS_INCOME = ['#34d399', '#10b981', '#6ee7b7', '#a7f3d0', '#22c55e', '#14b8a6', '#2dd4bf', '#5eead4'];
+const COLORS_EXPENSE = ['#f87171', '#fb7185', '#fda4af', '#fecdd3', '#ef4444', '#f97316', '#f59e0b', '#eab308', '#a3a3a3'];
+const COLORS_INCOME = ['#34d399', '#10b981', '#6ee7b7', '#a7f3d0', '#22c55e', '#14b8a6', '#2dd4bf', '#5eead4', '#a3a3a3'];
 
 function DonutTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
-  const p = payload[0]?.payload;
+  const p: PieDatum & { pct?: number } = payload[0]?.payload;
   if (!p) return null;
+
+  const pct = typeof p.pct === 'number' ? p.pct : null;
 
   return (
     <div className="rounded-lg border border-white/10 bg-neutral-950/95 p-3 text-sm shadow-xl">
@@ -54,8 +59,43 @@ function DonutTooltip({ active, payload }: any) {
         <span className="text-white/70">Total</span>
         <span className="text-white/90 font-semibold">{fmtBRL(Number(p.total_cents || 0))}</span>
       </div>
+      {pct !== null && (
+        <div className="mt-1 flex items-center justify-between gap-6">
+          <span className="text-white/70">Percentual</span>
+          <span className="text-white/80">{pct.toFixed(1)}%</span>
+        </div>
+      )}
+      {p.isOther && <div className="mt-2 text-xs text-white/50">Agrupado: soma das demais categorias.</div>}
     </div>
   );
+}
+
+function withOthers(top: TopCatUi[], totalCents: number, kind: 'income' | 'expense'): PieDatum[] {
+  const sumTop = top.reduce((acc, x) => acc + x.total_cents, 0);
+  const other = Math.max(0, totalCents - sumTop);
+
+  const base: PieDatum[] = top.map((c) => ({
+    id: c.id,
+    name: c.name,
+    total_cents: c.total_cents,
+    value: c.total_cents,
+    kind,
+  }));
+
+  if (other > 0) {
+    base.push({
+      id: 'other',
+      name: 'Outras',
+      total_cents: other,
+      value: other,
+      kind,
+      isOther: true,
+    });
+  }
+
+  // percentuais
+  const denom = Math.max(1, totalCents);
+  return base.map((d) => ({ ...d, pct: (d.total_cents / denom) * 100 })) as any;
 }
 
 export default function MonthlyReportsPage() {
@@ -69,22 +109,19 @@ export default function MonthlyReportsPage() {
   const [accountId, setAccountId] = useState<string>('');
   const [kind, setKind] = useState<KindFilter>('');
   const [search, setSearch] = useState<string>('');
-  const [categoryId, setCategoryId] = useState<string>(''); // filtro por categoria (clicável)
+  const [categoryId, setCategoryId] = useState<string>('');
 
-  const [totals, setTotals] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+  const [totalsAllKinds, setTotalsAllKinds] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+  const [totalsFiltered, setTotalsFiltered] = useState<Totals>({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+
   const [topExpenseCats, setTopExpenseCats] = useState<TopCatUi[]>([]);
   const [topIncomeCats, setTopIncomeCats] = useState<TopCatUi[]>([]);
 
   const maxTopExpense = useMemo(() => Math.max(1, ...topExpenseCats.map((x) => x.total_cents)), [topExpenseCats]);
   const maxTopIncome = useMemo(() => Math.max(1, ...topIncomeCats.map((x) => x.total_cents)), [topIncomeCats]);
 
-  const expensePieData = useMemo(() => {
-    return topExpenseCats.map((c) => ({ ...c, value: c.total_cents }));
-  }, [topExpenseCats]);
-
-  const incomePieData = useMemo(() => {
-    return topIncomeCats.map((c) => ({ ...c, value: c.total_cents }));
-  }, [topIncomeCats]);
+  const expensePieData = useMemo(() => withOthers(topExpenseCats, totalsAllKinds.expense_cents, 'expense'), [topExpenseCats, totalsAllKinds.expense_cents]);
+  const incomePieData = useMemo(() => withOthers(topIncomeCats, totalsAllKinds.income_cents, 'income'), [topIncomeCats, totalsAllKinds.income_cents]);
 
   async function getUserIdOrError(client: any) {
     const { data, error } = await client.auth.getUser();
@@ -102,7 +139,6 @@ export default function MonthlyReportsPage() {
       const supabase = supabaseBrowser();
       const userId = await getUserIdOrError(supabase);
 
-      // lookups
       const [a, c] = await Promise.all([
         supabase.from('accounts').select('id,name').order('created_at', { ascending: false }),
         supabase.from('categories').select('id,name,kind').order('created_at', { ascending: false }),
@@ -119,7 +155,26 @@ export default function MonthlyReportsPage() {
       const { startIso, endIso } = monthRangeUTC(month);
       const searchTrim = search.trim() || null;
 
-      // totals via RPC (respeitando categoria)
+      // totals do mês (sem filtro kind/category) -> para calcular Outras
+      const totalsAll = await supabase.rpc('transactions_totals', {
+        p_user_id: userId,
+        p_start: startIso,
+        p_end: endIso,
+        p_account_id: accountId || null,
+        p_category_id: null,
+        p_kind: null,
+        p_search: searchTrim,
+      });
+      if (totalsAll.error) throw new Error(totalsAll.error.message);
+
+      const rowAll = Array.isArray(totalsAll.data) ? totalsAll.data[0] : totalsAll.data;
+      setTotalsAllKinds({
+        income_cents: Number(rowAll?.income_cents ?? 0),
+        expense_cents: Number(rowAll?.expense_cents ?? 0),
+        net_cents: Number(rowAll?.net_cents ?? 0),
+      });
+
+      // totals filtrado (respeita kind/category) -> cards
       const totalsRes = await supabase.rpc('transactions_totals', {
         p_user_id: userId,
         p_start: startIso,
@@ -129,17 +184,16 @@ export default function MonthlyReportsPage() {
         p_kind: kind || null,
         p_search: searchTrim,
       });
-
       if (totalsRes.error) throw new Error(totalsRes.error.message);
 
-      const trow = Array.isArray(totalsRes.data) ? totalsRes.data[0] : totalsRes.data;
-      setTotals({
-        income_cents: Number(trow?.income_cents ?? 0),
-        expense_cents: Number(trow?.expense_cents ?? 0),
-        net_cents: Number(trow?.net_cents ?? 0),
+      const row = Array.isArray(totalsRes.data) ? totalsRes.data[0] : totalsRes.data;
+      setTotalsFiltered({
+        income_cents: Number(row?.income_cents ?? 0),
+        expense_cents: Number(row?.expense_cents ?? 0),
+        net_cents: Number(row?.net_cents ?? 0),
       });
 
-      // top categories (não depende do filtro de categoria — serve pra clicar e trocar)
+      // top categories (top N) — base para donut e barras
       const catMap = new Map(categoriesData.map((x) => [x.id, x.name]));
 
       const [topExp, topInc] = await Promise.all([
@@ -183,7 +237,8 @@ export default function MonthlyReportsPage() {
       );
     } catch (e: any) {
       setError(e?.message ? String(e.message) : String(e));
-      setTotals({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+      setTotalsAllKinds({ income_cents: 0, expense_cents: 0, net_cents: 0 });
+      setTotalsFiltered({ income_cents: 0, expense_cents: 0, net_cents: 0 });
       setTopExpenseCats([]);
       setTopIncomeCats([]);
     } finally {
@@ -207,17 +262,17 @@ export default function MonthlyReportsPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="text-xs text-white/60">Entradas</div>
-            <div className="mt-1 text-lg font-semibold text-emerald-300">{fmtBRL(totals.income_cents)}</div>
+            <div className="mt-1 text-lg font-semibold text-emerald-300">{fmtBRL(totalsFiltered.income_cents)}</div>
           </div>
 
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="text-xs text-white/60">Saídas</div>
-            <div className="mt-1 text-lg font-semibold text-red-300">{fmtBRL(totals.expense_cents)}</div>
+            <div className="mt-1 text-lg font-semibold text-red-300">{fmtBRL(totalsFiltered.expense_cents)}</div>
           </div>
 
           <div className="col-span-2 sm:col-span-1 rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="text-xs text-white/60">Líquido</div>
-            <div className="mt-1 text-lg font-semibold text-white/90">{fmtBRL(totals.net_cents)}</div>
+            <div className="mt-1 text-lg font-semibold text-white/90">{fmtBRL(totalsFiltered.net_cents)}</div>
           </div>
         </div>
       </div>
@@ -302,12 +357,12 @@ export default function MonthlyReportsPage() {
 
       {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
-      {/* Donuts */}
+      {/* Donuts com Outras */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium">Saídas por categoria</div>
-            <div className="text-xs text-white/50">toque para filtrar</div>
+            <div className="text-xs text-white/50">top + Outras</div>
           </div>
 
           {loading ? (
@@ -326,7 +381,10 @@ export default function MonthlyReportsPage() {
                     innerRadius="58%"
                     outerRadius="85%"
                     paddingAngle={2}
-                    onClick={(d: any) => d?.id && setCategoryId(String(d.id))}
+                    onClick={(d: any) => {
+                      if (d?.isOther) return;
+                      if (d?.id) setCategoryId(String(d.id));
+                    }}
                   >
                     {expensePieData.map((_, idx) => (
                       <Cell key={idx} fill={COLORS_EXPENSE[idx % COLORS_EXPENSE.length]} />
@@ -338,14 +396,14 @@ export default function MonthlyReportsPage() {
           )}
 
           <div className="mt-2 text-xs text-white/50">
-            {categoryId ? <>Filtro ativo: <span className="text-white/80">{categories.find(c => c.id === categoryId)?.name ?? 'categoria'}</span></> : 'Sem filtro de categoria.'}
+            Total saídas (mês): <span className="text-white/80">{fmtBRL(totalsAllKinds.expense_cents)}</span>
           </div>
         </div>
 
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium">Entradas por categoria</div>
-            <div className="text-xs text-white/50">toque para filtrar</div>
+            <div className="text-xs text-white/50">top + Outras</div>
           </div>
 
           {loading ? (
@@ -364,7 +422,10 @@ export default function MonthlyReportsPage() {
                     innerRadius="58%"
                     outerRadius="85%"
                     paddingAngle={2}
-                    onClick={(d: any) => d?.id && setCategoryId(String(d.id))}
+                    onClick={(d: any) => {
+                      if (d?.isOther) return;
+                      if (d?.id) setCategoryId(String(d.id));
+                    }}
                   >
                     {incomePieData.map((_, idx) => (
                       <Cell key={idx} fill={COLORS_INCOME[idx % COLORS_INCOME.length]} />
@@ -376,12 +437,12 @@ export default function MonthlyReportsPage() {
           )}
 
           <div className="mt-2 text-xs text-white/50">
-            {categoryId ? <>Filtro ativo: <span className="text-white/80">{categories.find(c => c.id === categoryId)?.name ?? 'categoria'}</span></> : 'Sem filtro de categoria.'}
+            Total entradas (mês): <span className="text-white/80">{fmtBRL(totalsAllKinds.income_cents)}</span>
           </div>
         </div>
       </div>
 
-      {/* Listas com barras (mantém, é útil) */}
+      {/* Listas com barras (mantém) */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between">
@@ -400,10 +461,7 @@ export default function MonthlyReportsPage() {
                   key={c.id}
                   type="button"
                   onClick={() => setCategoryId(c.id)}
-                  className={
-                    'w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5 ' +
-                    (categoryId === c.id ? 'ring-1 ring-[#D4AF37]/60 bg-white/5' : '')
-                  }
+                  className={'w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5 ' + (categoryId === c.id ? 'ring-1 ring-[#D4AF37]/60 bg-white/5' : '')}
                   title="Filtrar por esta categoria"
                 >
                   <div className="flex items-baseline justify-between gap-3">
@@ -411,10 +469,7 @@ export default function MonthlyReportsPage() {
                     <div className="text-sm text-red-200">{fmtBRL(c.total_cents)}</div>
                   </div>
                   <div className="h-2 rounded bg-white/10 overflow-hidden">
-                    <div
-                      className="h-2 rounded bg-red-400/60"
-                      style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopExpense) * 100))}%` }}
-                    />
+                    <div className="h-2 rounded bg-red-400/60" style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopExpense) * 100))}%` }} />
                   </div>
                 </button>
               ))}
@@ -439,10 +494,7 @@ export default function MonthlyReportsPage() {
                   key={c.id}
                   type="button"
                   onClick={() => setCategoryId(c.id)}
-                  className={
-                    'w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5 ' +
-                    (categoryId === c.id ? 'ring-1 ring-[#D4AF37]/60 bg-white/5' : '')
-                  }
+                  className={'w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5 ' + (categoryId === c.id ? 'ring-1 ring-[#D4AF37]/60 bg-white/5' : '')}
                   title="Filtrar por esta categoria"
                 >
                   <div className="flex items-baseline justify-between gap-3">
@@ -450,10 +502,7 @@ export default function MonthlyReportsPage() {
                     <div className="text-sm text-emerald-200">{fmtBRL(c.total_cents)}</div>
                   </div>
                   <div className="h-2 rounded bg-white/10 overflow-hidden">
-                    <div
-                      className="h-2 rounded bg-emerald-400/60"
-                      style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopIncome) * 100))}%` }}
-                    />
+                    <div className="h-2 rounded bg-emerald-400/60" style={{ width: `${Math.max(4, Math.round((c.total_cents / maxTopIncome) * 100))}%` }} />
                   </div>
                 </button>
               ))}
