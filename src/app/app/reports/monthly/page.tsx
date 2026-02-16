@@ -17,6 +17,7 @@ type BudgetRow = {
   month_date: string; // YYYY-MM-01
   category_id: string;
   limit_cents: number;
+  created_at?: string | null;
 };
 
 type ExpenseAggRow = { category_id: string; spent_cents: number };
@@ -43,7 +44,7 @@ function currentYYYYMM() {
 }
 
 function monthDateFromYYYYMM(yyyyMM: string) {
-  return `${yyyyMM}-01`; // YYYY-MM-01
+  return `${yyyyMM}-01`;
 }
 
 function monthRangeUTC(yyyyMM: string) {
@@ -55,6 +56,7 @@ function monthRangeUTC(yyyyMM: string) {
   return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
+// Aceita: "1000,00" | "1.000,00" | "1 000,00" | "R$ 1.000,00"
 function brlToCents(input: string) {
   const s = String(input || '')
     .trim()
@@ -149,6 +151,10 @@ export default function MonthlyReportsPage() {
   const [topExpenseCats, setTopExpenseCats] = useState<TopCatUi[]>([]);
   const [topIncomeCats, setTopIncomeCats] = useState<TopCatUi[]>([]);
 
+  // edição inline dos budgets (id -> string do input)
+  const [budgetEdits, setBudgetEdits] = useState<Record<string, string>>({});
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+
   const expensePieData = useMemo(
     () => withOthers(topExpenseCats, totalsAllKinds.expense_cents, 'expense'),
     [topExpenseCats, totalsAllKinds.expense_cents]
@@ -196,25 +202,33 @@ export default function MonthlyReportsPage() {
       const { startIso, endIso } = monthRangeUTC(month);
       const searchTrim = search.trim() || null;
 
-      // budgets do mês (usa month_date)
+      // budgets do mês (month_date + created_at)
       const b = await supabase
         .from('budgets')
-        .select('id,month_date,category_id,limit_cents')
+        .select('id,month_date,category_id,limit_cents,created_at')
         .eq('month_date', month_date)
         .order('created_at', { ascending: false });
 
       if (b.error) throw new Error(b.error.message);
 
-      setBudgets(
-        (((b.data as any[]) || [])).map((r) => ({
-          id: String(r.id),
-          month_date: String(r.month_date),
-          category_id: String(r.category_id),
-          limit_cents: Number(r.limit_cents ?? 0),
-        })) as BudgetRow[]
-      );
+      const bRows: BudgetRow[] = (((b.data as any[]) || [])).map((r) => ({
+        id: String(r.id),
+        month_date: String(r.month_date),
+        category_id: String(r.category_id),
+        limit_cents: Number(r.limit_cents ?? 0),
+        created_at: r.created_at ? String(r.created_at) : null,
+      }));
 
-      // gastos por categoria (expense) no mês
+      setBudgets(bRows);
+
+      // reset edits to current values (string em pt-BR)
+      const edits: Record<string, string> = {};
+      bRows.forEach((row) => {
+        edits[row.id] = (row.limit_cents / 100).toFixed(2).replace('.', ',');
+      });
+      setBudgetEdits(edits);
+
+      // gastos por categoria (expense)
       const expAgg = await supabase.rpc('expenses_by_category_month', {
         p_user_id: userId,
         p_start: startIso,
@@ -230,7 +244,7 @@ export default function MonthlyReportsPage() {
       });
       setExpenseByCategory(map);
 
-      // totals do mês (sem filtro kind/category) -> para calcular Outras
+      // totals do mês (sem filtro kind/category) -> Outras
       const totalsAll = await supabase.rpc('transactions_totals', {
         p_user_id: userId,
         p_start: startIso,
@@ -249,7 +263,7 @@ export default function MonthlyReportsPage() {
         net_cents: Number(rowAll?.net_cents ?? 0),
       });
 
-      // totals filtrado (cards)
+      // totals filtrado
       const totalsRes = await supabase.rpc('transactions_totals', {
         p_user_id: userId,
         p_start: startIso,
@@ -268,7 +282,7 @@ export default function MonthlyReportsPage() {
         net_cents: Number(row?.net_cents ?? 0),
       });
 
-      // top categories (top N)
+      // top categories
       const catMap = new Map(categoriesData.map((x) => [x.id, x.name]));
 
       const [topExp, topInc] = await Promise.all([
@@ -317,6 +331,7 @@ export default function MonthlyReportsPage() {
       setTopExpenseCats([]);
       setTopIncomeCats([]);
       setBudgets([]);
+      setBudgetEdits({});
       setExpenseByCategory({});
     } finally {
       setLoading(false);
@@ -360,6 +375,43 @@ export default function MonthlyReportsPage() {
       setError(e?.message ? String(e.message) : String(e));
     } finally {
       setSavingBudget(false);
+    }
+  }
+
+  async function saveBudgetRow(row: BudgetRow) {
+    setError(null);
+
+    const input = budgetEdits[row.id] ?? '';
+    const cents = brlToCents(input);
+    if (!Number.isFinite(cents) || cents < 0) return setError('Valor inválido.');
+
+    setRowBusyId(row.id);
+    try {
+      const supabase = supabaseBrowser();
+      const { error } = await supabase.from('budgets').update({ limit_cents: cents }).eq('id', row.id);
+      if (error) throw new Error(error.message);
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setRowBusyId(null);
+    }
+  }
+
+  async function deleteBudgetRow(row: BudgetRow) {
+    if (!confirm('Remover este orçamento?')) return;
+    setError(null);
+
+    setRowBusyId(row.id);
+    try {
+      const supabase = supabaseBrowser();
+      const { error } = await supabase.from('budgets').delete().eq('id', row.id);
+      if (error) throw new Error(error.message);
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setRowBusyId(null);
     }
   }
 
@@ -464,6 +516,7 @@ export default function MonthlyReportsPage() {
           <div className="text-xs text-white/50">Defina limites mensais e acompanhe o % usado</div>
         </div>
 
+        {/* criar/atualizar por categoria */}
         <div className="grid grid-cols-1 gap-2 md:grid-cols-12">
           <div className="md:col-span-6">
             <div className="text-xs text-white/60 mb-1">Categoria</div>
@@ -485,6 +538,7 @@ export default function MonthlyReportsPage() {
           </div>
         </div>
 
+        {/* lista com edição inline */}
         {budgetsUi.length === 0 ? (
           <div className="text-sm text-white/60">Nenhum orçamento configurado para {month}.</div>
         ) : (
@@ -505,37 +559,65 @@ export default function MonthlyReportsPage() {
                 pct! >= 80 ? 'bg-yellow-300/70' :
                 'bg-emerald-400/70';
 
+              const busy = rowBusyId === b.id;
+
               return (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => setCategoryId(b.category_id)}
-                  className="w-full rounded-lg border border-white/10 bg-black/10 p-3 text-left hover:bg-white/5 transition"
-                  title="Clique para filtrar por esta categoria"
-                >
+                <div key={b.id} className="rounded-lg border border-white/10 bg-black/10 p-3 space-y-2">
                   <div className="flex items-baseline justify-between gap-3">
-                    <div className="text-sm font-medium text-white/90 truncate">{b.categoryName}</div>
+                    <button type="button" onClick={() => setCategoryId(b.category_id)} className="text-left">
+                      <div className="text-sm font-medium text-white/90 truncate">{b.categoryName}</div>
+                      <div className="text-xs text-white/60">Clique para filtrar</div>
+                    </button>
                     <div className="text-xs text-white/60">{status}</div>
                   </div>
 
-                  <div className="mt-1 flex items-center justify-between gap-3 text-sm">
-                    <div className="text-white/70">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                    <div className="text-sm text-white/70">
                       Gasto: <span className="text-white/90">{fmtBRL(spent)}</span>
                       {limit > 0 && <> de <span className="text-white/90">{fmtBRL(limit)}</span></>}
+                      {limit > 0 && <span className="ml-2 text-white/60">({pct!.toFixed(0)}%)</span>}
                     </div>
-                    {limit > 0 && <div className="text-white/60">{pct!.toFixed(0)}%</div>}
+
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        className="w-44 rounded border border-white/15 bg-black/20 px-3 py-2 text-sm"
+                        value={budgetEdits[b.id] ?? ''}
+                        onChange={(e) => setBudgetEdits((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                        placeholder="ex: 1.000,00"
+                        disabled={busy}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void saveBudgetRow(b)}
+                        disabled={busy}
+                        className="rounded bg-[#D4AF37] px-3 py-2 text-sm font-medium text-black disabled:opacity-60"
+                      >
+                        {busy ? 'Salvando…' : 'Salvar'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteBudgetRow(b)}
+                        disabled={busy}
+                        className="rounded border border-red-500/40 px-3 py-2 text-sm text-red-200 hover:bg-red-500/10 disabled:opacity-60"
+                      >
+                        Remover
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="mt-2 h-2 rounded bg-white/10 overflow-hidden">
+                  <div className="h-2 rounded bg-white/10 overflow-hidden">
                     <div className={'h-2 rounded ' + barColor} style={{ width: `${Math.min(100, pctClamped)}%` }} />
                   </div>
 
                   {limit > 0 && (
-                    <div className="mt-2 text-xs text-white/60">
-                      Restante: <span className={b.remaining_cents < 0 ? 'text-red-200' : 'text-white/80'}>{fmtBRL(b.remaining_cents)}</span>
+                    <div className="text-xs text-white/60">
+                      Restante:{' '}
+                      <span className={b.remaining_cents < 0 ? 'text-red-200' : 'text-white/80'}>
+                        {fmtBRL(b.remaining_cents)}
+                      </span>
                     </div>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>
@@ -623,7 +705,7 @@ export default function MonthlyReportsPage() {
         </div>
       </div>
 
-      {/* Listas com barras (mantém) */}
+      {/* Listas com barras */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between">
