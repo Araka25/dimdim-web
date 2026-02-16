@@ -201,7 +201,7 @@ export default function MonthlyReportsPage() {
         .from('budgets')
         .select('id,month_date,category_id,limit_cents')
         .eq('month_date', month_date)
-        .order('updated_at', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (b.error) throw new Error(b.error.message);
 
