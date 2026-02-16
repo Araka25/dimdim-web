@@ -14,7 +14,7 @@ type TopCatUi = { id: string; name: string; total_cents: number };
 
 type BudgetRow = {
   id: string;
-  month: string; // YYYY-MM
+  month_date: string; // YYYY-MM-01
   category_id: string;
   limit_cents: number;
 };
@@ -42,6 +42,10 @@ function currentYYYYMM() {
   return `${yyyy}-${mm}`;
 }
 
+function monthDateFromYYYYMM(yyyyMM: string) {
+  return `${yyyyMM}-01`; // YYYY-MM-01
+}
+
 function monthRangeUTC(yyyyMM: string) {
   const [yStr, mStr] = yyyyMM.split('-');
   const y = Number(yStr);
@@ -51,7 +55,6 @@ function monthRangeUTC(yyyyMM: string) {
   return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
-// Aceita: "1000,00" | "1.000,00" | "1 000,00" | "R$ 1.000,00"
 function brlToCents(input: string) {
   const s = String(input || '')
     .trim()
@@ -189,23 +192,27 @@ export default function MonthlyReportsPage() {
       setAccounts(accountsData);
       setCategories(categoriesData);
 
+      const month_date = monthDateFromYYYYMM(month);
       const { startIso, endIso } = monthRangeUTC(month);
       const searchTrim = search.trim() || null;
 
-      // budgets do mês
+      // budgets do mês (usa month_date)
       const b = await supabase
         .from('budgets')
-        .select('id,month,category_id,limit_cents')
-        .eq('month', month)
+        .select('id,month_date,category_id,limit_cents')
+        .eq('month_date', month_date)
         .order('updated_at', { ascending: false });
 
       if (b.error) throw new Error(b.error.message);
-      setBudgets(((b.data as any[]) || []).map((r) => ({
-        id: String(r.id),
-        month: String(r.month),
-        category_id: String(r.category_id),
-        limit_cents: Number(r.limit_cents ?? 0),
-      })) as BudgetRow[]);
+
+      setBudgets(
+        (((b.data as any[]) || [])).map((r) => ({
+          id: String(r.id),
+          month_date: String(r.month_date),
+          category_id: String(r.category_id),
+          limit_cents: Number(r.limit_cents ?? 0),
+        })) as BudgetRow[]
+      );
 
       // gastos por categoria (expense) no mês
       const expAgg = await supabase.rpc('expenses_by_category_month', {
@@ -333,15 +340,16 @@ export default function MonthlyReportsPage() {
       const supabase = supabaseBrowser();
       const userId = await getUserIdOrError(supabase);
 
-      // upsert pela unique (user_id, month, category_id)
+      const month_date = monthDateFromYYYYMM(month);
+
       const { error } = await supabase.from('budgets').upsert(
         {
           user_id: userId,
-          month,
+          month_date,
           category_id: budgetCategoryId,
           limit_cents: cents,
         },
-        { onConflict: 'user_id,month,category_id' }
+        { onConflict: 'user_id,month_date,category_id' }
       );
 
       if (error) throw new Error(error.message);
@@ -373,14 +381,8 @@ export default function MonthlyReportsPage() {
           remaining_cents: remaining,
         };
       })
-      // só mostra budgets de categorias expense (pra manter coerência)
       .filter((x) => categories.find((c) => c.id === x.category_id)?.kind === 'expense')
-      // ordena: mais estourado primeiro
-      .sort((a, b) => {
-        const ap = a.pct ?? -1;
-        const bp = b.pct ?? -1;
-        return bp - ap;
-      });
+      .sort((a, b) => ((b.pct ?? -1) - (a.pct ?? -1)));
   }, [budgets, categories, expenseByCategory]);
 
   return (
@@ -429,9 +431,7 @@ export default function MonthlyReportsPage() {
           <div className="text-xs text-white/60 mb-1">Conta</div>
           <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
             <option value="">(Todas)</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
+            {accounts.map((a) => (<option key={a.id} value={a.id}>{a.name}</option>))}
           </select>
         </div>
 
@@ -444,9 +444,7 @@ export default function MonthlyReportsPage() {
           <div className="text-xs text-white/60 mb-1">Categoria (filtro)</div>
           <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
             <option value="">(Todas)</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
+            {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
           </select>
         </div>
 
@@ -461,11 +459,9 @@ export default function MonthlyReportsPage() {
 
       {/* ORÇAMENTOS (expense) */}
       <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">Orçamentos por categoria (Saídas)</div>
-            <div className="text-xs text-white/50">Defina limites mensais e acompanhe o % usado</div>
-          </div>
+        <div>
+          <div className="text-sm font-medium">Orçamentos por categoria (Saídas)</div>
+          <div className="text-xs text-white/50">Defina limites mensais e acompanhe o % usado</div>
         </div>
 
         <div className="grid grid-cols-1 gap-2 md:grid-cols-12">
@@ -473,9 +469,7 @@ export default function MonthlyReportsPage() {
             <div className="text-xs text-white/60 mb-1">Categoria</div>
             <select className="w-full rounded border border-white/15 bg-black/20 p-3 text-sm" value={budgetCategoryId} onChange={(e) => setBudgetCategoryId(e.target.value)}>
               <option value="">(Selecione)</option>
-              {expenseCategories.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+              {expenseCategories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
             </select>
           </div>
 
@@ -485,12 +479,7 @@ export default function MonthlyReportsPage() {
           </div>
 
           <div className="md:col-span-2 flex items-end">
-            <button
-              type="button"
-              onClick={() => void saveBudget()}
-              disabled={savingBudget}
-              className="w-full rounded bg-[#D4AF37] p-3 text-sm font-medium text-black disabled:opacity-60"
-            >
+            <button type="button" onClick={() => void saveBudget()} disabled={savingBudget} className="w-full rounded bg-[#D4AF37] p-3 text-sm font-medium text-black disabled:opacity-60">
               {savingBudget ? 'Salvando…' : 'Salvar'}
             </button>
           </div>
@@ -503,7 +492,7 @@ export default function MonthlyReportsPage() {
             {budgetsUi.map((b) => {
               const limit = b.limit_cents;
               const spent = b.spent_cents;
-              const pct = b.pct; // number|null
+              const pct = b.pct;
               const pctClamped = pct === null ? 0 : Math.min(160, Math.max(0, pct));
               const status =
                 limit <= 0 ? 'Sem limite' :
@@ -532,11 +521,7 @@ export default function MonthlyReportsPage() {
                   <div className="mt-1 flex items-center justify-between gap-3 text-sm">
                     <div className="text-white/70">
                       Gasto: <span className="text-white/90">{fmtBRL(spent)}</span>
-                      {limit > 0 && (
-                        <>
-                          {' '}de <span className="text-white/90">{fmtBRL(limit)}</span>
-                        </>
-                      )}
+                      {limit > 0 && <> de <span className="text-white/90">{fmtBRL(limit)}</span></>}
                     </div>
                     {limit > 0 && <div className="text-white/60">{pct!.toFixed(0)}%</div>}
                   </div>
@@ -557,7 +542,7 @@ export default function MonthlyReportsPage() {
         )}
       </div>
 
-      {/* Donuts */}
+      {/* Donuts com Outras */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between">
@@ -586,9 +571,7 @@ export default function MonthlyReportsPage() {
                       if (d?.id) setCategoryId(String(d.id));
                     }}
                   >
-                    {expensePieData.map((_, idx) => (
-                      <Cell key={idx} fill={COLORS_EXPENSE[idx % COLORS_EXPENSE.length]} />
-                    ))}
+                    {expensePieData.map((_, idx) => (<Cell key={idx} fill={COLORS_EXPENSE[idx % COLORS_EXPENSE.length]} />))}
                   </Pie>
                 </PieChart>
               </ResponsiveContainer>
@@ -627,9 +610,7 @@ export default function MonthlyReportsPage() {
                       if (d?.id) setCategoryId(String(d.id));
                     }}
                   >
-                    {incomePieData.map((_, idx) => (
-                      <Cell key={idx} fill={COLORS_INCOME[idx % COLORS_INCOME.length]} />
-                    ))}
+                    {incomePieData.map((_, idx) => (<Cell key={idx} fill={COLORS_INCOME[idx % COLORS_INCOME.length]} />))}
                   </Pie>
                 </PieChart>
               </ResponsiveContainer>
@@ -657,13 +638,7 @@ export default function MonthlyReportsPage() {
           ) : (
             <div className="mt-3 space-y-2">
               {topExpenseCats.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setCategoryId(c.id)}
-                  className="w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5"
-                  title="Filtrar por esta categoria"
-                >
+                <button key={c.id} type="button" onClick={() => setCategoryId(c.id)} className="w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5">
                   <div className="flex items-baseline justify-between gap-3">
                     <div className="text-sm text-white/80 truncate">{c.name}</div>
                     <div className="text-sm text-red-200">{fmtBRL(c.total_cents)}</div>
@@ -690,13 +665,7 @@ export default function MonthlyReportsPage() {
           ) : (
             <div className="mt-3 space-y-2">
               {topIncomeCats.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setCategoryId(c.id)}
-                  className="w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5"
-                  title="Filtrar por esta categoria"
-                >
+                <button key={c.id} type="button" onClick={() => setCategoryId(c.id)} className="w-full text-left space-y-1 rounded-lg p-2 -m-2 transition hover:bg-white/5">
                   <div className="flex items-baseline justify-between gap-3">
                     <div className="text-sm text-white/80 truncate">{c.name}</div>
                     <div className="text-sm text-emerald-200">{fmtBRL(c.total_cents)}</div>
