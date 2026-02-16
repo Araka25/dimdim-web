@@ -2,6 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabaseBrowser';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts';
 
 type Account = { id: string; name: string };
 type Totals = { income_cents: number; expense_cents: number; net_cents: number };
@@ -35,6 +44,37 @@ function monthLabel(m: number) {
   return labels[m - 1] ?? String(m);
 }
 
+function brlAxisFormatter(value: number) {
+  // value vem em CENTAVOS no nosso chart
+  return (value / 100).toLocaleString('pt-BR');
+}
+
+function TooltipContent({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+
+  const income = payload.find((p: any) => p.dataKey === 'income_cents')?.value ?? 0;
+  const expense = payload.find((p: any) => p.dataKey === 'expense_cents')?.value ?? 0;
+  const net = (income || 0) - (expense || 0);
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-neutral-950/95 p-3 text-sm shadow-xl">
+      <div className="mb-2 text-xs text-white/60">{label}</div>
+      <div className="flex items-center justify-between gap-6">
+        <span className="text-white/70">Entradas</span>
+        <span className="text-emerald-300 font-medium">{fmtBRL(income)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-6">
+        <span className="text-white/70">Saídas</span>
+        <span className="text-red-300 font-medium">{fmtBRL(expense)}</span>
+      </div>
+      <div className="mt-2 border-t border-white/10 pt-2 flex items-center justify-between gap-6">
+        <span className="text-white/70">Líquido</span>
+        <span className="text-white/90 font-semibold">{fmtBRL(net)}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function YearlyReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,8 +92,12 @@ export default function YearlyReportsPage() {
   const [topExpense, setTopExpense] = useState<Array<{ name: string; total_cents: number }>>([]);
   const [topIncome, setTopIncome] = useState<Array<{ name: string; total_cents: number }>>([]);
 
-  const maxBar = useMemo(() => {
-    return Math.max(1, ...byMonth.map((r) => Math.max(r.income_cents, r.expense_cents)));
+  const chartData = useMemo(() => {
+    return byMonth.map((r) => ({
+      month: monthLabel(r.month),
+      income_cents: r.income_cents,
+      expense_cents: r.expense_cents,
+    }));
   }, [byMonth]);
 
   async function getUserIdOrError(client: any) {
@@ -97,6 +141,7 @@ export default function YearlyReportsPage() {
       });
 
       if (bm.error) throw new Error(bm.error.message);
+
       const bmRows: ByMonthRow[] = ((bm.data as any[]) || []).map((r) => ({
         month: Number(r.month),
         income_cents: Number(r.income_cents ?? 0),
@@ -106,7 +151,6 @@ export default function YearlyReportsPage() {
 
       setByMonth(bmRows);
 
-      // totais do ano (somando os meses)
       const t = bmRows.reduce(
         (acc, r) => ({
           income_cents: acc.income_cents + r.income_cents,
@@ -117,7 +161,7 @@ export default function YearlyReportsPage() {
       );
       setTotals(t);
 
-      // top categorias do ano (reutiliza RPC existente)
+      // top categorias do ano
       const catMap = new Map(categoriesData.map((x) => [x.id, x.name]));
 
       const [topExp, topInc] = await Promise.all([
@@ -172,7 +216,8 @@ export default function YearlyReportsPage() {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, accountId, search]);
-  return(
+
+  return (
     <section className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
@@ -196,6 +241,7 @@ export default function YearlyReportsPage() {
         </div>
       </div>
 
+      {/* Filtros */}
       <div className="grid grid-cols-1 gap-3 rounded border border-white/10 bg-white/5 p-4 md:grid-cols-12">
         <div className="md:col-span-2">
           <div className="text-xs text-white/60 mb-1">Ano</div>
@@ -234,8 +280,13 @@ export default function YearlyReportsPage() {
         </div>
       </div>
 
-      {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
+      {error && (
+        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+          {error}
+        </div>
+      )}
 
+      {/* Gráfico (Recharts) */}
       <div className="rounded-lg border border-white/10 bg-white/5 p-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Entradas x Saídas (por mês)</div>
@@ -244,32 +295,24 @@ export default function YearlyReportsPage() {
 
         {loading ? (
           <div className="mt-4 text-sm text-white/60">Carregando…</div>
-        ) : byMonth.length === 0 ? (
+        ) : chartData.length === 0 ? (
           <div className="mt-4 text-sm text-white/60">Sem dados para este ano/filtro.</div>
         ) : (
-          <div className="mt-4 grid grid-cols-12 gap-2 items-end">
-            {byMonth.map((r) => (
-              <div key={r.month} className="col-span-2 sm:col-span-1">
-                <div className="h-24 rounded bg-white/5 flex items-end gap-1 px-1 py-1">
-                  <div
-                    className="w-1/2 rounded bg-emerald-400/70"
-                    style={{ height: `${Math.max(2, Math.round((r.income_cents / maxBar) * 100))}%` }}
-                    title={`Entradas: ${fmtBRL(r.income_cents)}`}
-                  />
-                  <div
-                    className="w-1/2 rounded bg-red-400/70"
-                    style={{ height: `${Math.max(2, Math.round((r.expense_cents / maxBar) * 100))}%` }}
-                    title={`Saídas: ${fmtBRL(r.expense_cents)}`
-                    }
-                  />
-                </div>
-                <div className="mt-1 text-center text-[11px] text-white/60">{monthLabel(r.month)}</div>
-              </div>
-            ))}
+          <div className="mt-4 h-72 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} barCategoryGap={14} barGap={4}>
+                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                <XAxis dataKey="month" tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 12 }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={brlAxisFormatter} tick={{ fill: 'rgba(255,255,255,0.5)', fontSize: 12 }} axisLine={false} tickLine={false} width={48} />
+                <Tooltip content={<TooltipContent />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
+                <Bar dataKey="income_cents" name="Entradas" fill="rgba(52, 211, 153, 0.75)" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="expense_cents" name="Saídas" fill="rgba(248, 113, 113, 0.75)" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
 
-        <div className="mt-4 flex gap-3 text-xs text-white/60">
+        <div className="mt-4 flex gap-4 text-xs text-white/60">
           <div className="flex items-center gap-2">
             <span className="inline-block h-2 w-2 rounded bg-emerald-400/70" />
             Entradas
@@ -281,6 +324,7 @@ export default function YearlyReportsPage() {
         </div>
       </div>
 
+      {/* Top categorias do ano */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between">
